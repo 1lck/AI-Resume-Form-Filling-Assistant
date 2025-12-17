@@ -20,7 +20,7 @@
 1. 打开 Chrome：`chrome://extensions/`（Edge：`edge://extensions/`）
 2. 开启“开发者模式”
 3. 点击“加载已解压的扩展程序”
-4. 选择本项目目录（例如：`F:\My_Project\AI-ANSWER-ASSISTANT-master`）
+4. 选择本项目目录（解压后的文件夹）
 5. 点击扩展图标打开侧边栏
 
 ## 第一次配置（DeepSeek）
