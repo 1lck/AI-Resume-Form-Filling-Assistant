@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg width="128px" height="128px" viewBox="0 0 128 128" version="1.1" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink">
+    <title>icon128</title>
+    <g id="icon128" stroke="none" fill="none" fill-rule="evenodd" stroke-width="1">
+        <g>
+            <rect id="矩形" stroke="#E2E8F0" stroke-width="2" fill="#FFFFFF" fill-rule="nonzero" x="14" y="14" width="100" height="100" rx="12"></rect>
+            <line x1="14" y1="47" x2="114" y2="47" id="路径" stroke="#E2E8F0" stroke-width="3"></line>
+            <line x1="14" y1="80" x2="114" y2="80" id="路径" stroke="#E2E8F0" stroke-width="3"></line>
+            <line x1="47" y1="14" x2="47" y2="114" id="路径" stroke="#E2E8F0" stroke-width="3"></line>
+            <line x1="80" y1="14" x2="80" y2="114" id="路径" stroke="#E2E8F0" stroke-width="3"></line>
+            <text id="AI" fill-rule="nonzero" font-family="CourierNewPSMT, Courier New" font-size="94" font-weight="normal" letter-spacing="-7.41555556" fill="#000000">
+                <tspan x="16" y="95">AI</tspan>
+            </text>
+            <path d="M7,102.008695 C14.4444444,116.50145 22.8194444,121.936231 32.125,118.313044 C45.1527778,103.820291 59.1111112,87.5159422 74,69.4" id="路径" stroke="#22C55E" stroke-width="12" stroke-linecap="round" stroke-linejoin="round"></path>
+        </g>
+    </g>
+</svg>

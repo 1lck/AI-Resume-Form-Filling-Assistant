@@ -1,0 +1,63 @@
+{
+  "siteId": "wjx_com",
+  "siteName": "问卷星",
+  "urlPatterns": [
+    "https://ks.wjx.com/*",
+    "https://www.wjx.com/*",
+    "https://wjx.cn/*",
+    "https://www.wjx.cn/*"
+  ],
+  "urlRegex": "^https?://(?:ks\\.|www\\.)?wjx\\.c(?:om|n)/",
+  "version": "1.0.0",
+  "createdAt": "2024-12-08",
+  "lastUpdated": "2024-12-08",
+  "description": "问卷星在线考试/问卷系统",
+  "selectors": {
+    "questionContainer": ".field.ui-field-contain[topic]",
+    "questionTypes": {
+      "detectByAttribute": "type",
+      "single": {
+        "typeValue": "3",
+        "container": ".field.ui-field-contain[type='3']",
+        "title": ".topichtml",
+        "optionsContainer": ".ui-controlgroup",
+        "optionItem": ".ui-radio",
+        "optionInput": "input[type='radio']",
+        "optionLabel": ".label",
+        "optionLabelPattern": "^([A-Z])[\\.\\.、\\s]",
+        "clickTarget": "input[type='radio']"
+      },
+      "multiple": {
+        "typeValue": "4",
+        "container": ".field.ui-field-contain[type='4']",
+        "title": ".topichtml",
+        "optionsContainer": ".ui-controlgroup",
+        "optionItem": ".ui-checkbox",
+        "optionInput": "input[type='checkbox']",
+        "optionLabel": ".label",
+        "optionLabelPattern": "^([A-Z])[\\.\\.、\\s]",
+        "clickTarget": "input[type='checkbox']"
+      },
+      "fill": {
+        "typeValue": "2",
+        "container": ".field.ui-field-contain[type='2']",
+        "title": ".topichtml",
+        "inputsContainer": ".beginner_problem",
+        "inputs": "textarea, input[type='text']"
+      }
+    },
+    "questionIndex": "topic",
+    "requiredMark": ".req"
+  },
+  "features": {
+    "hasQuestionIndex": true,
+    "hasTypeAttribute": true,
+    "inputsHidden": true,
+    "needClickWrapper": false,
+    "autoScrollSupport": true
+  },
+  "notes": "问卷星的input元素默认隐藏(display:none)，通过自定义的.jqradio/.jqcheck元素显示，但可以直接操作原生input元素"
+}
+
+
+

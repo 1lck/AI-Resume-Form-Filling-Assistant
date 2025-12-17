@@ -1,0 +1,304 @@
+/* AI自动答题助手 - Content Script Styles */
+
+:root {
+  --ai-primary: #18181b; /* Zinc 900 */
+  --ai-success: #10b981;
+  --ai-warning: #f59e0b;
+  --ai-danger: #ef4444;
+  --ai-bg: #ffffff;
+  --ai-text: #09090b;
+  --ai-text-light: #71717a;
+  --ai-border: #e4e4e7;
+  
+  --ai-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05), 0 2px 4px -1px rgba(0, 0, 0, 0.03);
+  --ai-shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.05), 0 4px 6px -2px rgba(0, 0, 0, 0.02);
+}
+
+/* 正在处理的题目 - 脉冲动画 */
+.ai-answer-processing {
+  position: relative;
+  z-index: 10;
+  border-radius: 4px;
+  transition: all 0.3s ease;
+}
+
+/* 已完成的题目标记 */
+.ai-answer-completed-mark {
+  position: absolute;
+  top: -8px;
+  right: -8px;
+  width: 20px;
+  height: 20px;
+  background: var(--ai-success);
+  color: white;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 20;
+  box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+  animation: ai-scale-in 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+}
+
+.ai-answer-completed-mark svg {
+  width: 12px;
+  height: 12px;
+  stroke-width: 3;
+}
+
+@keyframes ai-scale-in {
+  from { transform: scale(0); opacity: 0; }
+  to { transform: scale(1); opacity: 1; }
+}
+
+/* Toast notification */
+.ai-answer-toast {
+  position: fixed;
+  bottom: 24px;
+  right: 24px;
+  padding: 12px 16px;
+  background: var(--ai-primary);
+  color: white;
+  border-radius: 6px;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  font-size: 13px;
+  font-weight: 500;
+  box-shadow: var(--ai-shadow-lg);
+  z-index: 999999;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  animation: ai-slide-up 0.3s ease;
+  max-width: 320px;
+}
+
+.ai-answer-toast::before {
+  content: '';
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+}
+
+.ai-answer-toast.success::before { background: var(--ai-success); }
+.ai-answer-toast.error::before { background: var(--ai-danger); }
+.ai-answer-toast.warning::before { background: var(--ai-warning); }
+
+@keyframes ai-slide-up {
+  from { transform: translateY(20px); opacity: 0; }
+  to { transform: translateY(0); opacity: 1; }
+}
+
+/* Floating Panel */
+.ai-floating-panel {
+  position: fixed;
+  bottom: 30px;
+  right: 30px;
+  width: 260px;
+  background: var(--ai-bg);
+  border-radius: 8px;
+  box-shadow: var(--ai-shadow-lg);
+  z-index: 2147483647;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  overflow: hidden;
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  border: 1px solid var(--ai-border);
+}
+
+.ai-floating-panel.collapsed {
+  width: 40px;
+  height: 40px;
+  border-radius: 20px;
+  cursor: pointer;
+  background: var(--ai-primary);
+  border: none;
+}
+
+.ai-floating-panel.collapsed .ai-panel-header {
+  padding: 0;
+  justify-content: center;
+  height: 100%;
+  background: transparent;
+  border: none;
+}
+
+.ai-floating-panel.collapsed .ai-brand,
+.ai-floating-panel.collapsed .ai-toggle-btn {
+  display: none;
+}
+
+.ai-floating-panel.collapsed::after {
+  content: '✦';
+  font-size: 16px;
+  color: white;
+}
+
+.ai-panel-header {
+  background: #ffffff;
+  padding: 12px 16px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  cursor: move;
+  user-select: none;
+  border-bottom: 1px solid var(--ai-border);
+}
+
+.ai-brand {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 600;
+  font-size: 13px;
+  color: var(--ai-text);
+}
+
+.ai-logo {
+  font-size: 14px;
+  color: var(--ai-primary);
+}
+
+.ai-toggle-btn {
+  background: none;
+  border: none;
+  color: var(--ai-text-light);
+  cursor: pointer;
+  padding: 4px;
+  border-radius: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.ai-toggle-btn:hover {
+  background: #f4f4f5;
+  color: var(--ai-text);
+}
+
+.ai-panel-content {
+  padding: 16px;
+  background: var(--ai-bg);
+}
+
+.ai-status-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 16px;
+  font-size: 12px;
+  color: var(--ai-text-light);
+  padding: 6px 10px;
+  background: #f4f4f5;
+  border-radius: 4px;
+}
+
+.ai-status-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--ai-text-light);
+}
+
+.ai-status-dot.running {
+  background: var(--ai-primary);
+  box-shadow: 0 0 0 2px rgba(24, 24, 27, 0.1);
+  animation: ai-pulse 2s infinite;
+}
+
+.ai-status-dot.ready { background: var(--ai-success); }
+.ai-status-dot.error { background: var(--ai-danger); }
+
+@keyframes ai-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
+}
+
+.ai-stats-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.ai-stat {
+  text-align: center;
+  padding: 8px;
+  background: #ffffff;
+  border-radius: 6px;
+  border: 1px solid var(--ai-border);
+}
+
+.ai-stat-val {
+  display: block;
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--ai-text);
+  line-height: 1.2;
+}
+
+.ai-stat-label {
+  font-size: 10px;
+  color: var(--ai-text-light);
+  margin-top: 2px;
+}
+
+.ai-controls {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.ai-btn {
+  padding: 8px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+}
+
+.ai-btn-primary {
+  background: var(--ai-primary);
+  color: white;
+}
+
+.ai-btn-primary:hover:not(:disabled) {
+  background: #27272a;
+  transform: translateY(-1px);
+}
+
+.ai-btn-primary:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.ai-btn-secondary {
+  background: white;
+  border: 1px solid var(--ai-border);
+  color: var(--ai-text);
+}
+
+.ai-btn-secondary:hover:not(:disabled) {
+  background: #f4f4f5;
+  border-color: #d4d4d8;
+}
+
+.ai-btn-secondary:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+/* 已完成标记 Icon */
+.ai-check-icon {
+  width: 12px;
+  height: 12px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 3;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}

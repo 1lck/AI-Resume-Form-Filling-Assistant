@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>站点模板管理</title>
+  <link rel="stylesheet" href="popup.css">
+  <link rel="stylesheet" href="template-manager.css">
+</head>
+<body>
+  <div class="app">
+    <!-- 顶部标题栏 -->
+    <header class="app-header">
+      <div class="brand">
+        <button class="icon-btn" id="backBtn" title="返回">
+          <svg width="20" height="20" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 19l-7-7m0 0l7-7m-7 7h18"/>
+          </svg>
+        </button>
+        <span class="title">站点题型模板</span>
+      </div>
+    </header>
+
+    <!-- 主内容区域 -->
+    <main class="app-content">
+      
+      <!-- 模板列表 -->
+      <div class="template-section">
+        <div class="template-list" id="builtInList">
+          <!-- 内置模板列表 -->
+        </div>
+      </div>
+
+    </main>
+  </div>
+
+  <!-- 隐藏的iframe用于导航 -->
+  <iframe id="navFrame" style="display: none;"></iframe>
+
+  <script src="modules/site-matcher.js"></script>
+  <script src="modules/template-manager.js"></script>
+  <script src="template-manager-ui.js"></script>
+</body>
+</html>
+
+
+

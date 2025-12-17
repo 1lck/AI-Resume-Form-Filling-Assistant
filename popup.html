@@ -1,0 +1,327 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>AI 简历填表助手</title>
+    <link rel="stylesheet" href="popup.css" />
+  </head>
+  <body>
+    <div class="app">
+      <!-- 顶部标题栏 -->
+      <header class="app-header">
+        <div class="brand">
+          <span class="logo-icon">AI</span>
+          <span class="title">简历自动填表</span>
+          <div class="status-badge" id="statusBadge">
+            <span class="status-dot" id="statusDot"></span>
+            <span class="status-text" id="statusText">等待开始</span>
+          </div>
+        </div>
+        <div class="header-actions">
+          <button class="icon-btn" id="openSettingsBtn" title="DeepSeek/API 设置">
+            <svg
+              width="20"
+              height="20"
+              fill="none"
+              viewBox="0 0 24 24"
+              stroke="currentColor"
+            >
+              <path
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                stroke-width="1.5"
+                d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"
+              />
+              <path
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                stroke-width="1.5"
+                d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"
+              />
+            </svg>
+          </button>
+        </div>
+      </header>
+
+      <!-- 主内容区域 -->
+      <main class="app-content">
+        <!-- Tab 切换 -->
+        <div class="tabs" id="tabs">
+          <button class="tab active" data-tab="fill">自动填充</button>
+          <button class="tab" data-tab="resume">简历配置</button>
+        </div>
+
+        <!-- 自动填充 -->
+        <section class="tab-panel active" id="tab-fill">
+          <div class="stats-grid">
+            <div class="stat-card">
+              <span class="stat-value" id="fieldCount">0</span>
+              <span class="stat-label">识别字段</span>
+            </div>
+            <div class="stat-card">
+              <span class="stat-value" id="filledCount">0</span>
+              <span class="stat-label">已填充</span>
+            </div>
+          </div>
+
+          <div class="steps-area">
+            <button class="btn btn-primary btn-lg" id="startFillBtn">
+              <svg
+                width="20"
+                height="20"
+                fill="none"
+                viewBox="0 0 24 24"
+                stroke="currentColor"
+              >
+                <path
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  stroke-width="2"
+                  d="M9 12h6m2 10H7a2 2 0 01-2-2V6a2 2 0 012-2h7l5 5v11a2 2 0 01-2 2z"
+                />
+              </svg>
+              <span id="startFillBtnText">开始填充</span>
+            </button>
+            <button class="btn btn-outline btn-lg" id="savePageMemoryBtn" title="把当前页面已填写的字段和值批量保存到记忆库，供下次自动补全（不会自动提交）">
+              保存本页记忆
+            </button>
+            <div class="tip" id="fillTip" hidden>
+              已填充完成，请检查后手动提交。
+            </div>
+          </div>
+
+          <div class="result-section" id="resultSection" hidden>
+            <div class="section-header">
+              <span>匹配预览（可改值后重填）</span>
+              <button class="btn-text" id="clearResultsBtn">清空</button>
+            </div>
+            <div class="table-container">
+              <table class="data-table" id="resultTable">
+                <thead>
+                  <tr>
+                    <th class="col-field">字段</th>
+                    <th class="col-value">填充值</th>
+                    <th class="col-reason">AI 匹配说明</th>
+                    <th class="col-action">操作</th>
+                  </tr>
+                </thead>
+                <tbody id="resultTableBody"></tbody>
+              </table>
+            </div>
+          </div>
+        </section>
+
+        <!-- 简历配置 -->
+        <section class="tab-panel" id="tab-resume">
+          <div class="form-group">
+            <label for="resumeText">简历/要点（粘贴文本即可）</label>
+            <textarea
+              id="resumeText"
+              class="textarea"
+              placeholder="粘贴简历内容或要点，越完整越好…"
+            ></textarea>
+          </div>
+          <div class="action-row">
+            <button class="btn btn-primary" id="parseResumeBtn">
+              AI 解析简历
+            </button>
+            <button class="btn btn-outline" id="uploadPdfBtn">上传 PDF 并解析</button>
+            <button class="btn btn-outline" id="saveResumeBtn" disabled>
+              保存修改
+            </button>
+          </div>
+          <input type="file" id="resumePdfFile" accept="application/pdf" hidden />
+
+          <div class="section-header">
+            <span>解析预览（可直接编辑）</span>
+            <button class="btn-text" id="reloadResumeBtn">重新加载</button>
+          </div>
+          <div class="table-container">
+            <table class="data-table" id="resumeTable">
+              <thead>
+                <tr>
+                  <th class="col-field">字段</th>
+                  <th class="col-value">值</th>
+                </tr>
+              </thead>
+              <tbody id="resumeTableBody">
+                <tr>
+                  <td class="empty-state" colspan="2">
+                    暂无解析结果，请先点击“AI 解析简历”。
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+
+          <div class="section-header">
+            <span>记忆库（用于补全简历未覆盖字段）</span>
+            <div class="section-actions">
+              <button class="btn-text" id="reloadMemoryBtn">刷新</button>
+              <button class="btn-text" id="clearMemoryBtn">清空</button>
+            </div>
+          </div>
+          <div class="table-container">
+            <table class="data-table" id="memoryTable">
+              <thead>
+                <tr>
+                  <th class="col-field">字段</th>
+                  <th class="col-value">记住的值</th>
+                  <th class="col-action">操作</th>
+                </tr>
+              </thead>
+              <tbody id="memoryTableBody">
+                <tr>
+                  <td class="empty-state" colspan="3">暂无记忆数据。</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        <!-- 简要日志区域 -->
+        <div class="log-section">
+          <div class="section-header">
+            <span>运行日志</span>
+            <button class="btn-text" id="clearLog">清空</button>
+          </div>
+          <div class="log-container" id="logContent">
+            <div class="log-item log-info">
+              <span class="log-time">--:--</span>
+              <span class="log-msg">
+                准备就绪：先在“简历配置”里解析并保存简历，然后到“自动填充”一键填写。
+              </span>
+            </div>
+          </div>
+        </div>
+      </main>
+
+      <!-- 设置浮层 (Modal) -->
+      <div class="modal" id="settingsModal">
+        <div class="modal-backdrop" id="closeSettingsBackdrop"></div>
+        <div class="modal-content">
+          <div class="modal-header">
+            <h3>DeepSeek / OpenAI兼容模型配置</h3>
+            <button class="icon-btn" id="closeSettingsBtn">
+              <svg
+                width="20"
+                height="20"
+                fill="none"
+                viewBox="0 0 24 24"
+                stroke="currentColor"
+              >
+                <path
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  stroke-width="2"
+                  d="M6 18L18 6M6 6l12 12"
+                />
+              </svg>
+            </button>
+          </div>
+          <div class="modal-body">
+            <div class="model-list" id="modelList"></div>
+            <button class="btn btn-outline btn-block" id="addModelBtn">
+              <svg
+                width="16"
+                height="16"
+                fill="none"
+                viewBox="0 0 24 24"
+                stroke="currentColor"
+              >
+                <path
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  stroke-width="2"
+                  d="M12 4v16m8-8H4"
+                />
+              </svg>
+              <span>添加自定义模型</span>
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <!-- 添加/编辑模型浮层 -->
+      <div class="modal" id="editModelModal">
+        <div class="modal-backdrop" id="closeEditBackdrop"></div>
+        <div class="modal-content">
+          <div class="modal-header">
+            <h3 id="editModalTitle">添加模型</h3>
+            <button class="icon-btn" id="closeEditBtn">
+              <svg
+                width="20"
+                height="20"
+                fill="none"
+                viewBox="0 0 24 24"
+                stroke="currentColor"
+              >
+                <path
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  stroke-width="2"
+                  d="M6 18L18 6M6 6l12 12"
+                />
+              </svg>
+            </button>
+          </div>
+          <div class="modal-body">
+            <div class="form-group">
+              <label for="editName">模型名称</label>
+              <input type="text" id="editName" placeholder="DeepSeek" />
+            </div>
+            <div class="form-group">
+              <label for="editBaseUrl">Base URL</label>
+              <input
+                type="text"
+                id="editBaseUrl"
+                placeholder="https://api.deepseek.com/v1"
+              />
+            </div>
+            <div class="form-group">
+              <label for="editApiKey">API Key</label>
+              <div class="input-wrapper">
+                <input type="password" id="editApiKey" placeholder="sk-..." />
+                <button class="toggle-visibility" id="toggleEditApiKey">
+                  <svg
+                    width="16"
+                    height="16"
+                    fill="none"
+                    viewBox="0 0 24 24"
+                    stroke="currentColor"
+                  >
+                    <path
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                      stroke-width="2"
+                      d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"
+                    />
+                    <path
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                      stroke-width="2"
+                      d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"
+                    />
+                  </svg>
+                </button>
+              </div>
+            </div>
+            <div class="form-group">
+              <label for="editModel">模型ID</label>
+              <input type="text" id="editModel" placeholder="deepseek-chat" />
+            </div>
+            <div class="config-status" id="editStatus"></div>
+          </div>
+          <div class="modal-footer">
+            <button class="btn btn-primary btn-block" id="saveModelBtn">
+              保存
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+    <script src="libs/pdfjs/pdf.min.js"></script>
+    <script src="popup.js"></script>
+  </body>
+</html>

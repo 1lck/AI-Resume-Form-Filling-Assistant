@@ -1,0 +1,57 @@
+{
+  "siteId": "tencent_wj",
+  "siteName": "腾讯问卷",
+  "urlPatterns": [
+    "https://wj.qq.com/*",
+    "https://*.wj.qq.com/*"
+  ],
+  "urlRegex": "^https?://(?:[^.]+\\.)?wj\\.qq\\.com/",
+  "version": "1.0.0",
+  "createdAt": "2024-12-11",
+  "lastUpdated": "2024-12-11",
+  "description": "腾讯问卷在线调查/考试系统",
+  "selectors": {
+    "questionContainer": "section.question[data-question-id]",
+    "questionTypes": {
+      "detectByClass": true,
+      "single": {
+        "container": "section.question.question-type-radio",
+        "title": ".question-title .text",
+        "optionsContainer": ".question-body",
+        "optionItem": ".checkbox-option",
+        "optionInput": "input.checkbox-input[type='radio']",
+        "optionLabel": "label.checkbox-cell .cell-m",
+        "optionLabelPattern": null,
+        "clickTarget": "input.checkbox-input[type='radio']"
+      },
+      "multiple": {
+        "container": "section.question.question-type-checkbox",
+        "title": ".question-title .text",
+        "optionsContainer": ".option-group--content",
+        "optionItem": ".checkbox-option",
+        "optionInput": "input.checkbox-input[type='checkbox']",
+        "optionLabel": "label.checkbox-cell .cell-m",
+        "optionLabelPattern": null,
+        "clickTarget": "input.checkbox-input[type='checkbox']"
+      },
+      "fill": {
+        "container": "section.question.question-type-textarea",
+        "title": ".question-title .text",
+        "inputsContainer": ".question-body",
+        "inputs": "textarea.inputs-textarea, input.inputs-input[type='text']"
+      }
+    },
+    "questionIndex": "data-question-id",
+    "questionSeq": ".question-seq"
+  },
+  "features": {
+    "hasQuestionIndex": true,
+    "hasDataAttribute": true,
+    "inputsHidden": false,
+    "needClickWrapper": false,
+    "autoScrollSupport": true,
+    "hasQuestionSeq": true
+  },
+  "notes": "腾讯问卷使用标准的input元素，通过class区分题型(question-type-radio/question-type-checkbox/question-type-textarea)。每个题目都有data-question-id属性作为唯一标识。"
+}
+
