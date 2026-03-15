@@ -63,6 +63,7 @@ async function callAI(config, prompt, mode) {
 value 规则：
 - kind = "checkbox_group"：value 为字符串数组（要勾选的选项文本）
 - kind = "radio_group" / "select"：value 为字符串（要选择的选项文本）
+- kind = "date_like"：value 为标准化日期字符串；日期填 `YYYY-MM-DD`，年月填 `YYYY-MM`，日期时间填 `YYYY-MM-DDTHH:mm`
 - 其它：value 为字符串
 - 若无法判断，请返回 value = ""，并在 reason 说明原因（不要编造）`,
   };

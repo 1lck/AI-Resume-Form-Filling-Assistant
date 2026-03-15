@@ -360,6 +360,71 @@
     return String(value);
   }
 
+  function detectDateFieldMeta(el, label) {
+    if (!el || el.tagName?.toLowerCase?.() !== "input") return null;
+
+    const type = String(el.getAttribute("type") || "text").toLowerCase();
+    const name = String(el.getAttribute("name") || "");
+    const id = String(el.id || "");
+    const placeholder = String(el.getAttribute("placeholder") || "");
+    const autocomplete = String(el.getAttribute("autocomplete") || "");
+    const className = String(el.className || "");
+    const haystack = [label, name, id, placeholder, autocomplete, className]
+      .join(" ")
+      .toLowerCase();
+
+    let dateMode = null;
+    if (["date", "month", "datetime-local"].includes(type)) {
+      dateMode = type;
+    } else if (/(出生年月|年月|month)/i.test(haystack)) {
+      dateMode = "month";
+    } else if (
+      /(生日|出生日期|开始日期|结束日期|日期|dob|birthday|birthdate|date)/i.test(
+        haystack
+      )
+    ) {
+      dateMode = "date";
+    }
+
+    const framework = detectDateFramework(el);
+    if (!dateMode && framework === "generic") return null;
+
+    return {
+      dateMode: dateMode || "date",
+      framework,
+      hints: [label, name, id, placeholder, autocomplete, className]
+        .map((item) => normalizeText(item || ""))
+        .filter(Boolean)
+        .slice(0, 6),
+    };
+  }
+
+  function detectDateFramework(el) {
+    const candidates = [];
+    let current = el;
+    for (let depth = 0; current && depth < 4; depth += 1, current = current.parentElement) {
+      candidates.push(String(current.className || ""));
+      for (const attr of ["data-testid", "data-type", "role"]) {
+        const value = current.getAttribute?.(attr);
+        if (value) candidates.push(String(value));
+      }
+    }
+
+    const text = candidates.join(" ").toLowerCase();
+    if (text.includes("ant-picker")) return "ant";
+    if (text.includes("el-date-editor") || text.includes("el-picker")) return "element";
+    if (text.includes("flatpickr")) return "flatpickr";
+    if (text.includes("mui")) return "mui";
+    if (
+      text.includes("datepicker") ||
+      text.includes("date-picker") ||
+      text.includes("calendar")
+    ) {
+      return "generic";
+    }
+    return "generic";
+  }
+
   // --- Field Scanning ---
   function scanFields() {
     const root = pickLikelyFormRoot();
@@ -484,6 +549,33 @@
         // 普通输入框
         const fieldId = `f_${++idSeq}`;
         const label = getFieldLabel(el);
+        const dateMeta = detectDateFieldMeta(el, label);
+        if (dateMeta) {
+          fields.push({
+            fieldId,
+            kind: "date_like",
+            inputType: type,
+            dateMode: dateMeta.dateMode,
+            framework: dateMeta.framework,
+            label,
+            name: el.getAttribute("name") || "",
+            id: el.id || "",
+            placeholder: el.getAttribute("placeholder") || "",
+            autocomplete: el.getAttribute("autocomplete") || "",
+            hints: dateMeta.hints,
+          });
+          runtime.push({
+            fieldId,
+            kind: "date_like",
+            el,
+            inputType: type,
+            dateMode: dateMeta.dateMode,
+            framework: dateMeta.framework,
+            hints: dateMeta.hints,
+          });
+          continue;
+        }
+
         fields.push({
           fieldId,
           kind: "text",
