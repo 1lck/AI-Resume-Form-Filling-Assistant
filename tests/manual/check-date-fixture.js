@@ -506,6 +506,132 @@ class MockAntPanel {
   }
 }
 
+class MockAntPickerCell extends MockAntCell {
+  getAttribute(name) {
+    if (name === "title") return this._title;
+    if (name === "data-month") {
+      const match = this._title.match(/-(\d{2})-/);
+      return match ? match[1] : "";
+    }
+    if (name === "data-day") {
+      const match = this._title.match(/-(\d{2})$/);
+      return match ? match[1] : "";
+    }
+    return "";
+  }
+}
+
+class MockAntPickerPanel {
+  constructor(input, options = {}) {
+    this.input = input;
+    this.open = false;
+    this.className = options.hidden
+      ? "ant-picker-dropdown ant-picker-dropdown-hidden"
+      : "ant-picker-dropdown";
+    this.year = 2026;
+    this.month = 3;
+    this.pendingValue = "";
+    this._strictMouseSequence = Boolean(options.strictMouseSequence);
+    this._hidden = Boolean(options.hidden);
+    this._yearNode = new MockTextNode(String(this.year));
+    this._monthNode = new MockTextNode(`${this.month}月`);
+    this._prevYearBtn = new MockElementNode(
+      "ant-picker-header-super-prev-btn",
+      () => {
+        this.year -= 1;
+        this.syncHeader();
+      },
+      { strictMouseSequence: this._strictMouseSequence }
+    );
+    this._nextYearBtn = new MockElementNode(
+      "ant-picker-header-super-next-btn",
+      () => {
+        this.year += 1;
+        this.syncHeader();
+      },
+      { strictMouseSequence: this._strictMouseSequence }
+    );
+    this._monthToggle = new MockElementNode(
+      "ant-picker-month-btn",
+      null,
+      { strictMouseSequence: this._strictMouseSequence }
+    );
+  }
+
+  syncHeader() {
+    this._yearNode.textContent = String(this.year);
+    this._monthNode.textContent = `${this.month}月`;
+  }
+
+  getAttribute(name) {
+    if (name === "aria-hidden") return this._hidden ? "false" : this.open ? "false" : "true";
+    return "";
+  }
+
+  contains() {
+    return false;
+  }
+
+  querySelector(selector) {
+    if (selector === ".ant-picker-year-btn") return this._yearNode;
+    if (selector === ".ant-picker-month-btn") return this._monthNode;
+    if (selector === ".ant-picker-header-super-prev-btn") return this._prevYearBtn;
+    if (selector === ".ant-picker-header-super-next-btn") return this._nextYearBtn;
+    return null;
+  }
+
+  querySelectorAll(selector) {
+    if (selector === ".ant-picker-cell-in-view") {
+      return [String(this.year - 1), String(this.year), String(this.year + 1)].map(
+        (year) =>
+          new MockAntPickerCell(
+            `${year}-${String(this.month).padStart(2, "0")}-01`,
+            year,
+            () => {
+              this.year = Number(year);
+              this.syncHeader();
+            },
+            { strictMouseSequence: this._strictMouseSequence }
+          )
+      );
+    }
+
+    if (selector === ".ant-picker-cell") {
+      const monthCells = ["05", "06", "07", "08"].map(
+        (month) =>
+          new MockAntPickerCell(
+            `${this.year}-${month}-01`,
+            `${Number(month)}月`,
+            () => {
+              this.month = Number(month);
+              this.syncHeader();
+            },
+            { strictMouseSequence: this._strictMouseSequence }
+          )
+      );
+      const dayCells = ["04", "05", "06", "07"].map(
+        (day) =>
+          new MockAntPickerCell(
+            `${this.year}-${String(this.month).padStart(2, "0")}-${day}`,
+            String(Number(day)),
+            () => {
+              const finalValue = `${this.year}-${String(this.month).padStart(2, "0")}-${day}`;
+              this.pendingValue = finalValue;
+              this.input.lockProgrammaticWrite = false;
+              this.input.value = finalValue;
+              this.input.lockProgrammaticWrite = true;
+              this.open = false;
+            },
+            { strictMouseSequence: this._strictMouseSequence }
+          )
+      );
+      return [...monthCells, ...dayCells];
+    }
+
+    return [];
+  }
+}
+
 (async () => {
   const nativeDateInput = new MockInputElement("date");
   const nativeMonthInput = new MockInputElement("month");
@@ -636,11 +762,12 @@ class MockAntPanel {
   };
 
   context.document.querySelectorAll = (selector) => {
-    if (selector === ".ant-calendar-picker-container" || selector === ".ant-calendar") {
+    if (
+      selector === ".ant-calendar-picker-container:not(.slide-up-leave)" ||
+      selector === ".ant-calendar-picker-container" ||
+      selector === ".ant-calendar"
+    ) {
       return delayedAntPanelVisible ? [delayedAntPanel] : [];
-    }
-    if (selector.includes("calendar")) {
-      return [delayedAntWrapper];
     }
     return [];
   };
@@ -715,6 +842,75 @@ class MockAntPanel {
     process.exit(1);
   }
 
+  const antPickerInput = new MockInputElement("text");
+  antPickerInput.lockProgrammaticWrite = true;
+  antPickerInput.attributes.name = "birthdate";
+  antPickerInput.className = "ant-picker-input";
+  const hiddenLegacyPanel = new MockAntPanel(antPickerInput, {
+    strictMouseSequence: true,
+    supportsPanelInput: false,
+  });
+  hiddenLegacyPanel.open = true;
+  hiddenLegacyPanel.className = "ant-calendar-picker-container slide-up-leave";
+  hiddenLegacyPanel.getAttribute = (name) => (name === "aria-hidden" ? "false" : "");
+  hiddenLegacyPanel.querySelector = (selector) => {
+    if (selector === ".ant-calendar-year-select") return new MockTextNode("2026年");
+    if (selector === ".ant-calendar-month-select") return new MockTextNode("3月");
+    return null;
+  };
+  hiddenLegacyPanel.querySelectorAll = () => [];
+
+  const antPickerPanel = new MockAntPickerPanel(antPickerInput, {
+    strictMouseSequence: true,
+  });
+  let antPickerVisible = false;
+  const antPickerWrapper = new MockElementNode(
+    "ant-picker",
+    () => {
+      antPickerPanel.open = true;
+      antPickerVisible = true;
+    },
+    { strictMouseSequence: true }
+  );
+  antPickerInput.closest = (selector) =>
+    selector === ".ant-picker" ? antPickerWrapper : null;
+  antPickerInput.parentElement = {
+    querySelector: () => null,
+  };
+
+  context.document.querySelectorAll = (selector) => {
+    if (selector === ".ant-calendar-picker-container:not(.slide-up-leave)") {
+      return [];
+    }
+    if (selector === ".ant-calendar-picker-container" || selector === ".ant-calendar") {
+      return [hiddenLegacyPanel];
+    }
+    if (selector === ".ant-picker-dropdown:not(.ant-picker-dropdown-hidden)") {
+      return antPickerVisible ? [antPickerPanel] : [];
+    }
+    if (selector === ".ant-picker-dropdown") {
+      return antPickerVisible ? [antPickerPanel] : [];
+    }
+    return [];
+  };
+
+  const antPickerResult = await hooks.fillDateLikeField(
+    { kind: "date_like", el: antPickerInput, dateMode: "date", framework: "ant" },
+    "2002-07-05"
+  );
+
+  if (!antPickerResult.filled || antPickerInput.value !== "2002-07-05") {
+    console.error("Ant picker date fill failed", {
+      antPickerResult,
+      value: antPickerInput.value,
+      panelVisible: antPickerVisible,
+      wrapperEvents: antPickerWrapper.events,
+      pickerPrevYearEvents: antPickerPanel._prevYearBtn.events,
+      hiddenLegacyPanelClass: hiddenLegacyPanel.className,
+    });
+    process.exit(1);
+  }
+
   console.log(
     JSON.stringify(
       {
@@ -730,6 +926,7 @@ class MockAntPanel {
         antFill: antInput.value,
         delayedAntFill: delayedAntInput.value,
         strictAntFill: strictAntInput.value,
+        antPickerFill: antPickerInput.value,
         status: "panel-fill-ok",
       },
       null,
