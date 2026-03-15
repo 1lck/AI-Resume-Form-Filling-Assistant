@@ -458,6 +458,7 @@
       el.focus?.();
       setNativeValue(el, value);
       dispatchTextInputEvent(el);
+      dispatchKeyboardCommitEvents(el);
       el.dispatchEvent(new Event("change", { bubbles: true }));
       el.blur?.();
       const actual = String(el.value || "").trim();
@@ -619,6 +620,29 @@
       return;
     }
     el.dispatchEvent(new Event("input", { bubbles: true }));
+  }
+
+  function dispatchKeyboardCommitEvents(el) {
+    if (!el || typeof el.dispatchEvent !== "function") return;
+    for (const key of ["Enter", "Tab"]) {
+      dispatchKeyboardEvent(el, "keydown", key);
+      dispatchKeyboardEvent(el, "keyup", key);
+    }
+  }
+
+  function dispatchKeyboardEvent(el, type, key) {
+    if (typeof KeyboardEvent === "function") {
+      el.dispatchEvent(
+        new KeyboardEvent(type, {
+          bubbles: true,
+          key,
+        })
+      );
+      return;
+    }
+    const event = new Event(type, { bubbles: true });
+    event.key = key;
+    el.dispatchEvent(event);
   }
 
   function isNormalizedDateMatch(actual, expected, mode) {

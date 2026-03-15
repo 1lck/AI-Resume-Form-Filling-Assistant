@@ -46,6 +46,7 @@ class MockEvent {
     this.type = type;
     this.bubbles = Boolean(init.bubbles);
     this.data = init.data ?? null;
+    this.key = init.key ?? "";
   }
 }
 
@@ -84,6 +85,10 @@ Object.defineProperty(MockInputElement.prototype, "value", {
   },
   set(value) {
     if (this.lockProgrammaticWrite) return;
+    if (this.commitOnKeyboard) {
+      this._pendingValue = String(value);
+      return;
+    }
     this._value = String(value);
   },
   configurable: true,
@@ -248,9 +253,26 @@ class MockPanel {
   }
 }
 
+class MockKeyboardConfirmInput extends MockInputElement {
+  constructor() {
+    super("text");
+    this.commitOnKeyboard = true;
+    this._pendingValue = "";
+  }
+
+  dispatchEvent(event) {
+    this.events.push(event.key ? `${event.type}:${event.key}` : event.type);
+    if (event.type === "keydown" && (event.key === "Enter" || event.key === "Tab")) {
+      this._value = this._pendingValue;
+    }
+    return true;
+  }
+}
+
 (async () => {
   const nativeDateInput = new MockInputElement("date");
   const nativeMonthInput = new MockInputElement("month");
+  const keyboardConfirmInput = new MockKeyboardConfirmInput();
 
   const panelInput = new MockInputElement("text");
   panelInput.lockProgrammaticWrite = true;
@@ -287,6 +309,20 @@ class MockPanel {
     process.exit(1);
   }
 
+  const keyboardConfirmResult = await hooks.fillDateLikeField(
+    { kind: "date_like", el: keyboardConfirmInput, dateMode: "date", framework: "generic" },
+    "1999-08-21"
+  );
+
+  if (!keyboardConfirmResult.filled || keyboardConfirmInput.value !== "1999-08-21") {
+    console.error("Keyboard confirm date fill failed", {
+      keyboardConfirmResult,
+      value: keyboardConfirmInput.value,
+      events: keyboardConfirmInput.events,
+    });
+    process.exit(1);
+  }
+
   const panelResult = await hooks.fillDateLikeField(
     { kind: "date_like", el: panelInput, dateMode: "date", framework: "generic" },
     "1999-08-21"
@@ -308,6 +344,8 @@ class MockPanel {
         nativeMonthFill: nativeMonthInput.value,
         nativeDateEvents: nativeDateInput.events,
         nativeMonthEvents: nativeMonthInput.events,
+        keyboardConfirmFill: keyboardConfirmInput.value,
+        keyboardConfirmEvents: keyboardConfirmInput.events,
         panelFill: panelInput.value,
         status: "panel-fill-ok",
       },
