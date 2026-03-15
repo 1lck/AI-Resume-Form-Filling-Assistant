@@ -364,6 +364,49 @@
     return String(value);
   }
 
+  const ANT_DATE_PRESETS = {
+    antCalendarWithYearSelect: {
+      yearPanelSelector: ".ant-calendar-year-select",
+      yearElementSelector:
+        ".ant-calendar-year-panel-cell:not(.ant-calendar-year-panel-cell-disabled):not(.ant-calendar-year-panel-last-decade-cell):not(.ant-calendar-year-panel-next-decade-cell)",
+      yearFilterClasses: false,
+      decadeSelector: ".ant-calendar-year-panel-decade-select-content",
+      nextDecadeBtn: ".ant-calendar-year-panel-next-decade-btn",
+      prevDecadeBtn: ".ant-calendar-year-panel-prev-decade-btn",
+      monthConfig: ".ant-calendar-month-select",
+      monthElementSelector: ".ant-calendar-month-panel-month",
+      dayElementSelector: ".ant-calendar-date",
+      yearRetryTimes: 60,
+      monthRetryTimes: 12,
+    },
+    antCalendar: {
+      yearPanelSelector: null,
+      yearElementSelector: ".ant-calendar-month-panel-year-select-content",
+      yearFilterClasses: true,
+      decadeSelector: ".ant-calendar-year-panel-decade-select-content",
+      nextDecadeBtn: ".ant-calendar-month-panel-next-year-btn",
+      prevDecadeBtn: ".ant-calendar-month-panel-prev-year-btn",
+      monthConfig: "",
+      monthElementSelector: ".ant-calendar-month-panel-month",
+      dayElementSelector: ".ant-calendar-date",
+      yearRetryTimes: 60,
+      monthRetryTimes: 12,
+    },
+    antPicker: {
+      yearPanelSelector: ".ant-picker-year-btn",
+      yearElementSelector: ".ant-picker-cell-in-view",
+      yearFilterClasses: false,
+      decadeSelector: ".ant-picker-decade-btn",
+      nextDecadeBtn: ".ant-picker-header-super-next-btn",
+      prevDecadeBtn: ".ant-picker-header-super-prev-btn",
+      monthConfig: ".ant-picker-month-btn",
+      monthElementSelector: ".ant-picker-cell",
+      dayElementSelector: ".ant-picker-cell",
+      yearRetryTimes: 60,
+      monthRetryTimes: 12,
+    },
+  };
+
   async function fillDateLikeField(runtime, value) {
     const normalized = normalizeDateLikeValue(value, runtime);
     if (!normalized.ok) {
@@ -372,6 +415,11 @@
 
     const el = runtime?.el;
     if (!el) return { filled: false, message: "日期字段不存在" };
+
+    if ((runtime?.framework || "") === "ant") {
+      const antOk = await fillAntDateLikeByPreset(runtime, normalized.value);
+      if (antOk) return { filled: true };
+    }
 
     if (setDateValueWithEvents(el, normalized.value, runtime)) {
       return { filled: true };
@@ -698,6 +746,361 @@
       hour: match[4] || "",
       minute: match[5] || "",
     };
+  }
+
+  function getAntDatePreset(name) {
+    const preset = ANT_DATE_PRESETS[name];
+    if (!preset) {
+      throw new Error(`未找到日期选择器预设: ${name}`);
+    }
+    return preset;
+  }
+
+  function extractDisplayYear(text) {
+    const samples = [
+      { regex: /(\d{4})\s*年\s*-\s*(\d{4})\s*年/, group: 2 },
+      { regex: /(\d{4})\s*年/, group: 1 },
+      { regex: /(\d{4})/, group: 1 },
+    ];
+    for (const sample of samples) {
+      const match = String(text || "").match(sample.regex);
+      if (match) return Number(match[sample.group]);
+    }
+    return null;
+  }
+
+  function extractDisplayMonth(text) {
+    const samples = [
+      { regex: /(\d{4})\s*年\s*(\d{1,2})\s*月/, group: 2 },
+      { regex: /(\d{1,2})\s*月/, group: 1 },
+    ];
+    for (const sample of samples) {
+      const match = String(text || "").match(sample.regex);
+      if (match) return Number(match[sample.group]);
+    }
+    return null;
+  }
+
+  function getMonthAliases(month) {
+    return (
+      [
+        ["一月", "1月", "01", "1", "Jan", "01月"],
+        ["二月", "2月", "02", "2", "Feb", "02月"],
+        ["三月", "3月", "03", "3", "Mar", "03月"],
+        ["四月", "4月", "04", "4", "Apr", "04月"],
+        ["五月", "5月", "05", "5", "May", "05月"],
+        ["六月", "6月", "06", "6", "Jun", "06月"],
+        ["七月", "7月", "07", "7", "Jul", "07月"],
+        ["八月", "8月", "08", "8", "Aug", "08月"],
+        ["九月", "9月", "09", "9", "Sept", "09月"],
+        ["十月", "10月", "10", "10", "Oct", "10月"],
+        ["十一月", "11月", "11", "11", "Nov", "11月"],
+        ["十二月", "12月", "12", "12", "Dec", "12月"],
+      ][month - 1] || []
+    );
+  }
+
+  function isLegacyAntCalendarInput(el) {
+    if (!el) return false;
+    const className = String(el.className || "");
+    return (
+      className.includes("ant-calendar-picker-input") ||
+      Boolean(el.closest?.(".ant-calendar-picker"))
+    );
+  }
+
+  function isModernAntPickerInput(el) {
+    if (!el) return false;
+    const className = String(el.className || "");
+    return className.includes("ant-picker") || Boolean(el.closest?.(".ant-picker"));
+  }
+
+  async function dispatchFocusClickOpen(el, waitMs) {
+    if (!el || typeof el.dispatchEvent !== "function") return false;
+    try {
+      el.focus?.();
+      el.dispatchEvent(new Event("focus"));
+    } catch (_) {
+      // ignore
+    }
+    el.dispatchEvent(
+      createMouseLikeEvent("click", {
+        bubbles: true,
+        cancelable: true,
+        view: window,
+      })
+    );
+    if ((waitMs || 0) > 0) {
+      await sleep(waitMs);
+    }
+    return true;
+  }
+
+  async function fillAntDateLikeByPreset(runtime, value) {
+    const el = runtime?.el;
+    if (!el) return false;
+
+    if (isLegacyAntCalendarInput(el)) {
+      const selector = ".ant-calendar-picker-container:not(.slide-up-leave)";
+      if (!document.querySelector(selector)) {
+        await dispatchFocusClickOpen(el, 10);
+      }
+      const panel = document.querySelector(selector);
+      if (!panel) return false;
+      const presetName = panel.querySelector(".ant-calendar-year-select")
+        ? "antCalendarWithYearSelect"
+        : "antCalendar";
+      const ok = await navigateDatePanelByPreset(presetName, panel, value);
+      await sleep(50);
+      return ok && isNormalizedDateMatch(String(el.value || "").trim(), value, runtime?.dateMode);
+    }
+
+    if (isModernAntPickerInput(el)) {
+      await dispatchRealClickSequence(el, 100);
+      const panel = document.querySelector(".ant-picker-dropdown:not(.ant-picker-dropdown-hidden)");
+      if (!panel) return false;
+      const ok = await navigateDatePanelByPreset("antPicker", panel, value);
+      await sleep(50);
+      return ok && isNormalizedDateMatch(String(el.value || "").trim(), value, runtime?.dateMode);
+    }
+
+    return false;
+  }
+
+  async function navigateDatePanelByPreset(presetOrOptions, containerArg, dateStrArg) {
+    let options;
+    if (typeof presetOrOptions === "string") {
+      if (!containerArg || !dateStrArg) return false;
+      options = {
+        container: containerArg,
+        dateStr: dateStrArg,
+        ...getAntDatePreset(presetOrOptions),
+      };
+    } else {
+      options = presetOrOptions;
+    }
+
+    let {
+      container,
+      dateStr,
+      yearPanelSelector,
+      yearElementSelector,
+      yearFilterClasses,
+      decadeSelector,
+      nextDecadeBtn,
+      prevDecadeBtn,
+      monthConfig,
+      monthElementSelector,
+      dayElementSelector,
+      yearRetryTimes = 60,
+      subContainerSelector = null,
+      monthRetryTimes = 10,
+    } = options || {};
+
+    const root = container;
+    let scope = root;
+    let success = false;
+    let yearMatched = false;
+
+    const applySubContainer = () => {
+      if (!subContainerSelector) {
+        scope = root;
+        return;
+      }
+      const sub = root.querySelector(subContainerSelector);
+      scope = sub || root;
+    };
+
+    try {
+      const [rawYear, rawMonth, rawDay] = String(dateStr || "")
+        .split("-")
+        .map((part) => Number(part));
+      const targetYear = rawYear;
+      const targetMonth = rawMonth;
+      const targetDay = Number.isNaN(rawDay) ? 1 : rawDay;
+      if (
+        !(Number.isInteger(targetYear) && targetYear >= 1900 && targetYear <= 2100) ||
+        !(Number.isInteger(targetMonth) && targetMonth >= 1 && targetMonth <= 12) ||
+        !(Number.isInteger(targetDay) && targetDay >= 1 && targetDay <= 31)
+      ) {
+        return false;
+      }
+
+      const selectDay = async () => {
+        if (!dayElementSelector || !Number.isInteger(targetDay)) {
+          success = true;
+          return;
+        }
+        applySubContainer();
+        await sleep(50);
+        if (!isDatePanelVisible(scope, {})) return;
+
+        const cells = Array.from(scope.querySelectorAll?.(dayElementSelector) || []);
+        if (cells.length === 0) {
+          success = true;
+          return;
+        }
+        const firstText = normalizeText(cells[0]?.textContent || "");
+        if (firstText.includes("月")) {
+          success = true;
+          return;
+        }
+        const matched = cells.filter((cell) => {
+          const text = normalizeText(cell.textContent || "");
+          return Number(text) === targetDay;
+        });
+        const target = targetDay <= 15 ? matched[0] : matched[matched.length - 1];
+        if (!target) return;
+        await dispatchRealClickSequence(target, 100);
+        success = true;
+      };
+
+      const selectMonth = async () => {
+        if (!monthElementSelector || !Number.isInteger(targetMonth)) {
+          await selectDay();
+          return;
+        }
+
+        applySubContainer();
+        if (monthConfig == null || typeof monthConfig !== "object") {
+          if (monthConfig) {
+            const toggle = scope.querySelector(monthConfig);
+            if (toggle) {
+              await dispatchRealClickSequence(toggle, 100);
+              applySubContainer();
+              await sleep(100);
+            }
+          }
+          const aliases = getMonthAliases(targetMonth);
+          const cells = Array.from(scope.querySelectorAll?.(monthElementSelector) || []);
+          const target = cells.find((cell) => {
+            const text = normalizeText(String(cell.textContent || "").replace(/\s+/g, ""));
+            return aliases.includes(text);
+          });
+          if (!target) return;
+          await dispatchRealClickSequence(target, 100);
+          await selectDay();
+          return;
+        }
+
+        if (monthRetryTimes <= 0) return;
+        const currentText = String(
+          scope.querySelector?.(monthElementSelector)?.textContent || ""
+        );
+        const currentMonth = extractDisplayMonth(currentText);
+        if (currentMonth === targetMonth) {
+          await selectDay();
+          return;
+        }
+        const selector =
+          targetMonth > Number(currentMonth || 0)
+            ? monthConfig.nextMonthSelector
+            : monthConfig.prevMonthSelector;
+        const btn = scope.querySelector(selector);
+        if (!btn) return;
+        monthRetryTimes -= 1;
+        await dispatchRealClickSequence(btn, 100);
+        await selectMonth();
+        if (!success && yearMatched) {
+          await sleep(200);
+          if (!isDatePanelVisible(scope, {})) {
+            success = true;
+          }
+        }
+      };
+
+      const selectYear = async () => {
+        if (!yearElementSelector || !Number.isInteger(targetYear)) {
+          await selectMonth();
+          return;
+        }
+
+        if (yearRetryTimes <= 0) return;
+        applySubContainer();
+
+        if (yearPanelSelector == null) {
+          const text = String(scope.querySelector?.(yearElementSelector)?.textContent || "");
+          const currentYear = extractDisplayYear(text);
+          if (currentYear === targetYear) {
+            yearMatched = true;
+            await selectMonth();
+            return;
+          }
+
+          const fallbackSelector =
+            targetYear > Number(currentYear || 0)
+              ? nextDecadeBtn ||
+                (monthConfig && typeof monthConfig === "object"
+                  ? monthConfig.nextMonthSelector
+                  : "")
+              : prevDecadeBtn ||
+                (monthConfig && typeof monthConfig === "object"
+                  ? monthConfig.prevMonthSelector
+                  : "");
+          const btn = fallbackSelector ? scope.querySelector(fallbackSelector) : null;
+          if (!btn) return;
+          yearRetryTimes -= 1;
+          await dispatchRealClickSequence(btn, 50);
+          await selectYear();
+          return;
+        }
+
+        const cells = Array.from(scope.querySelectorAll?.(yearElementSelector) || []);
+        const matched = cells.find((cell, index) => {
+          const text = String(cell.textContent || "");
+          const numeric = extractDisplayYear(text);
+          if (text === String(targetYear) || numeric === targetYear) {
+            if (yearFilterClasses === true) {
+              return index !== 0 && index !== cells.length - 1;
+            }
+            if (Array.isArray(yearFilterClasses) && yearFilterClasses.length > 0) {
+              return !yearFilterClasses.some((name) => cell.closest?.(`.${name}`));
+            }
+            return true;
+          }
+          return false;
+        });
+
+        if (matched) {
+          await dispatchRealClickSequence(matched, 100);
+          yearMatched = true;
+          await selectMonth();
+          return;
+        }
+
+        let currentYear = null;
+        if (decadeSelector) {
+          const decade = scope.querySelector(decadeSelector);
+          currentYear = extractDisplayYear(String(decade?.textContent || ""));
+        }
+        if (currentYear == null) {
+          const lastCell = cells[cells.length - 1];
+          currentYear = extractDisplayYear(String(lastCell?.textContent || ""));
+        }
+        if (currentYear == null) return;
+        const btn = scope.querySelector(
+          targetYear >= currentYear ? nextDecadeBtn : prevDecadeBtn
+        );
+        if (!btn) return;
+        yearRetryTimes -= 1;
+        await dispatchRealClickSequence(btn, 100);
+        await selectYear();
+      };
+
+      applySubContainer();
+      if (yearPanelSelector != null) {
+        const toggle = scope.querySelector(yearPanelSelector);
+        if (toggle) {
+          await dispatchRealClickSequence(toggle, 100);
+          applySubContainer();
+        }
+      }
+      await selectYear();
+    } catch (_) {
+      success = false;
+    }
+
+    return success;
   }
 
   async function syncAntCalendarPanel(panel, parts) {

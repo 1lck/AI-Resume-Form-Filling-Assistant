@@ -842,6 +842,67 @@ class MockAntPickerPanel {
     process.exit(1);
   }
 
+  const directAntInput = new MockInputElement("text");
+  directAntInput.lockProgrammaticWrite = true;
+  directAntInput.attributes.name = "birthdate";
+  directAntInput.className = "ant-calendar-picker-input ant-input";
+  const directAntPanel = new MockAntPanel(directAntInput, {
+    strictMouseSequence: true,
+    supportsPanelInput: false,
+  });
+  let directAntPanelVisible = false;
+  const inertAntWrapper = new MockElementNode(
+    "ant-calendar-picker",
+    null,
+    { strictMouseSequence: true }
+  );
+  directAntInput.closest = (selector) =>
+    selector === ".ant-calendar-picker" ? inertAntWrapper : null;
+  directAntInput.parentElement = {
+    querySelector: (selector) =>
+      selector === ".ant-calendar-picker-icon"
+        ? new MockElementNode("ant-calendar-picker-icon", null, {
+            strictMouseSequence: true,
+          })
+        : null,
+  };
+  directAntInput.dispatchEvent = (event) => {
+    directAntInput.events.push(event?.type || "");
+    const type = event?.type || "";
+    if (type === "click") {
+      directAntPanel.open = true;
+      directAntPanelVisible = true;
+    }
+    return true;
+  };
+
+  context.document.querySelectorAll = (selector) => {
+    if (
+      selector === ".ant-calendar-picker-container:not(.slide-up-leave)" ||
+      selector === ".ant-calendar-picker-container" ||
+      selector === ".ant-calendar"
+    ) {
+      return directAntPanelVisible ? [directAntPanel] : [];
+    }
+    return [];
+  };
+
+  const directAntResult = await hooks.fillDateLikeField(
+    { kind: "date_like", el: directAntInput, dateMode: "date", framework: "ant" },
+    "2002-07-05"
+  );
+
+  if (!directAntResult.filled || directAntInput.value !== "2002-07-05") {
+    console.error("Direct-input ant calendar fill failed", {
+      directAntResult,
+      value: directAntInput.value,
+      panelVisible: directAntPanelVisible,
+      inputEvents: directAntInput.events,
+      wrapperEvents: inertAntWrapper.events,
+    });
+    process.exit(1);
+  }
+
   const antPickerInput = new MockInputElement("text");
   antPickerInput.lockProgrammaticWrite = true;
   antPickerInput.attributes.name = "birthdate";
@@ -926,6 +987,7 @@ class MockAntPickerPanel {
         antFill: antInput.value,
         delayedAntFill: delayedAntInput.value,
         strictAntFill: strictAntInput.value,
+        directAntFill: directAntInput.value,
         antPickerFill: antPickerInput.value,
         status: "panel-fill-ok",
       },
