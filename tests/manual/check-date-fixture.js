@@ -146,7 +146,12 @@ vm.createContext(context);
 vm.runInContext(contentScript, context, { filename: "content.js" });
 
 const hooks = context.__AI_RESUME_TEST_HOOKS__;
-if (!hooks.normalizeDateLikeValue || !hooks.fillDateLikeField) {
+if (
+  !hooks.normalizeDateLikeValue ||
+  !hooks.fillDateLikeField ||
+  !hooks.getFieldLabel ||
+  !hooks.findMemoryForField
+) {
   console.error("Test hooks are not available from content.js");
   process.exit(1);
 }
@@ -176,10 +181,61 @@ if (invalidDate.ok) {
   process.exit(1);
 }
 
+class MockLabelContainer {
+  constructor(text) {
+    this._labelNode = new MockTextNode(text);
+  }
+
+  querySelector(selector) {
+    if (
+      selector === ".no-form-item-label" ||
+      selector === ".ant-form-item-label" ||
+      selector === ".ant-form-item-label label" ||
+      selector === '[class*="item-label"]' ||
+      selector === '[class*="field-label"]' ||
+      selector === '[class*="form-label"]'
+    ) {
+      return this._labelNode;
+    }
+    return null;
+  }
+}
+
 class MockTextNode {
   constructor(text) {
     this.textContent = text;
   }
+}
+
+const kuaishouLikeInput = new MockInputElement("text");
+kuaishouLikeInput.attributes.placeholder = "请选择日期";
+kuaishouLikeInput.attributes.name = "birthdate";
+const labelContainer = new MockLabelContainer("出生日期");
+kuaishouLikeInput.closest = (selector) =>
+  selector.includes("form-item") || selector.includes("item") || selector.includes("field")
+    ? labelContainer
+    : null;
+
+const extractedLabel = hooks.getFieldLabel(kuaishouLikeInput);
+if (extractedLabel !== "出生日期") {
+  console.error("Container label extraction failed", { extractedLabel });
+  process.exit(1);
+}
+
+const memoryIndex = hooks.buildMemoryIndex({
+  出生日期: { label: "出生日期", value: "1999-08-21" },
+});
+const memoryHit = hooks.findMemoryForField(
+  {
+    label: extractedLabel,
+    name: "birthdate",
+    placeholder: "请选择日期",
+  },
+  memoryIndex
+);
+if (!memoryHit || memoryHit.value !== "1999-08-21") {
+  console.error("Memory lookup failed for extracted label", { extractedLabel, memoryHit });
+  process.exit(1);
 }
 
 class MockCell {
@@ -488,6 +544,7 @@ class MockAntPanel {
         ...baseline,
         nativeDateFill: nativeDateInput.value,
         nativeMonthFill: nativeMonthInput.value,
+        extractedLabel,
         nativeDateEvents: nativeDateInput.events,
         nativeMonthEvents: nativeMonthInput.events,
         keyboardConfirmFill: keyboardConfirmInput.value,

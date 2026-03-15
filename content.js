@@ -1219,11 +1219,39 @@
       if (t) return t;
     }
 
+    const containerLabel = getContainerFieldLabel(el);
+    if (containerLabel) return containerLabel;
+
     const placeholder = el.getAttribute?.("placeholder");
     if (placeholder) return normalizeText(placeholder);
 
     const name = el.getAttribute?.("name");
     if (name) return name;
+
+    return "";
+  }
+
+  function getContainerFieldLabel(el) {
+    const container =
+      el?.closest?.(
+        '.no-form-item, .ant-form-item, [class*="form-item"], [class*="field"], [class*="item"]'
+      ) || null;
+    if (!container) return "";
+
+    const selectors = [
+      ".no-form-item-label",
+      ".ant-form-item-label label",
+      ".ant-form-item-label",
+      '[class*="item-label"]',
+      '[class*="field-label"]',
+      '[class*="form-label"]',
+    ];
+
+    for (const selector of selectors) {
+      const labelEl = container.querySelector?.(selector);
+      const text = normalizeText(labelEl?.textContent || "");
+      if (text) return text;
+    }
 
     return "";
   }
@@ -1489,8 +1517,12 @@
 
   if (window.__AI_RESUME_TEST_HOOKS__) {
     Object.assign(window.__AI_RESUME_TEST_HOOKS__, {
+      buildMemoryIndex,
       detectDateFieldMeta,
       fillDateLikeField,
+      findMemoryForField,
+      getFieldLabel,
+      normalizeMemoryKey,
       normalizeDateLikeValue,
       readRuntimeValue,
     });
