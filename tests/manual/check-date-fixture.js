@@ -362,8 +362,18 @@ class MockAntPanel {
     this.className = "ant-calendar-picker-container";
     this.year = 2026;
     this.month = 3;
+    this.pendingValue = "";
     this._yearNode = new MockTextNode(`${this.year}年`);
     this._monthNode = new MockTextNode(`${this.month}月`);
+    this._inputNode = new MockInputElement("text");
+    this._okBtn = new MockElementNode("ant-calendar-ok-btn", () => {
+      const finalValue = this.pendingValue || this._inputNode.value;
+      if (!finalValue) return;
+      this.input.lockProgrammaticWrite = false;
+      this.input.value = finalValue;
+      this.input.lockProgrammaticWrite = true;
+      this.open = false;
+    });
     this._prevYearBtn = new MockElementNode("ant-calendar-prev-year-btn", () => {
       this.year -= 1;
       this.syncHeader();
@@ -407,6 +417,8 @@ class MockAntPanel {
   querySelector(selector) {
     if (selector === ".ant-calendar-year-select") return this._yearNode;
     if (selector === ".ant-calendar-month-select") return this._monthNode;
+    if (selector === ".ant-calendar-input") return this._inputNode;
+    if (selector === ".ant-calendar-ok-btn") return this._okBtn;
     if (selector === ".ant-calendar-prev-year-btn") return this._prevYearBtn;
     if (selector === ".ant-calendar-next-year-btn") return this._nextYearBtn;
     if (selector === ".ant-calendar-prev-month-btn") return this._prevMonthBtn;
@@ -425,10 +437,8 @@ class MockAntPanel {
             `${this.year}-${String(this.month).padStart(2, "0")}-${day}`,
             String(Number(day)),
             () => {
-              this.input.lockProgrammaticWrite = false;
-              this.input.value = `${this.year}-${String(this.month).padStart(2, "0")}-${day}`;
-              this.input.lockProgrammaticWrite = true;
-              this.open = false;
+              this.pendingValue = `${this.year}-${String(this.month).padStart(2, "0")}-${day}`;
+              this._inputNode.value = this.pendingValue;
             }
           )
       );

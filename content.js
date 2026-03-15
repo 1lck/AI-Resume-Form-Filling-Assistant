@@ -474,10 +474,13 @@
     if (!el) return false;
 
     openDateLikePanel(el);
-    await sleep(20);
-
-    const panel = findDateLikePanel(runtime);
+    const panel = await waitForDateLikePanel(runtime, 600);
     if (!panel) return false;
+
+    if ((runtime?.framework || "") === "ant") {
+      const antOk = await fillAntCalendarByInput(panel, el, value, runtime);
+      if (antOk) return true;
+    }
 
     const parts = splitNormalizedDateValue(value, runtime?.dateMode || "date");
     if (!parts) return false;
@@ -503,11 +506,47 @@
     return isNormalizedDateMatch(actual, value, runtime?.dateMode || "date");
   }
 
+  async function waitForDateLikePanel(runtime, timeoutMs) {
+    const startedAt = Date.now();
+    while (Date.now() - startedAt < timeoutMs) {
+      const panel = findDateLikePanel(runtime);
+      if (panel) return panel;
+      await sleep(30);
+    }
+    return null;
+  }
+
   async function prepareDatePanel(panel, runtime, parts) {
     if ((runtime?.framework || "") === "ant") {
       return syncAntCalendarPanel(panel, parts);
     }
     return panelMatchesYear(panel, parts.year);
+  }
+
+  async function fillAntCalendarByInput(panel, targetEl, value, runtime) {
+    const input = panel.querySelector?.(".ant-calendar-input");
+    if (!input) return false;
+
+    try {
+      input.focus?.();
+      setNativeValue(input, value);
+      dispatchTextInputEvent(input);
+      dispatchKeyboardCommitEvents(input);
+      input.dispatchEvent(new Event("change", { bubbles: true }));
+    } catch (_) {
+      return false;
+    }
+
+    const okBtn = panel.querySelector?.(".ant-calendar-ok-btn");
+    if (okBtn?.click) {
+      okBtn.click();
+    } else if (okBtn?.dispatchEvent) {
+      okBtn.dispatchEvent(new Event("click", { bubbles: true }));
+    }
+
+    await sleep(50);
+    const actual = String(targetEl?.value || "").trim();
+    return isNormalizedDateMatch(actual, value, runtime?.dateMode || "date");
   }
 
   function openDateLikePanel(el) {
