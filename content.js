@@ -473,14 +473,9 @@
     const el = runtime?.el;
     if (!el) return false;
 
-    openDateLikePanel(el);
+    await openDateLikePanel(el);
     const panel = await waitForDateLikePanel(runtime, 1200);
     if (!panel) return false;
-
-    if ((runtime?.framework || "") === "ant") {
-      const antOk = await fillAntCalendarByInput(panel, el, value, runtime);
-      if (antOk) return true;
-    }
 
     const parts = splitNormalizedDateValue(value, runtime?.dateMode || "date");
     if (!parts) return false;
@@ -490,20 +485,28 @@
     }
 
     if ((runtime?.framework || "") !== "ant") {
-      if (!clickDatePart(panel, "month", parts.month)) {
+      if (!(await clickDatePart(panel, "month", parts.month))) {
         return false;
       }
     }
 
     if ((runtime?.dateMode || "date") !== "month") {
-      if (!clickDatePart(panel, "day", parts.day)) {
+      if (!(await clickDatePart(panel, "day", parts.day))) {
         return false;
       }
     }
 
     await sleep(20);
     const actual = String(el.value || "").trim();
-    return isNormalizedDateMatch(actual, value, runtime?.dateMode || "date");
+    if (isNormalizedDateMatch(actual, value, runtime?.dateMode || "date")) {
+      return true;
+    }
+
+    if ((runtime?.framework || "") === "ant") {
+      return fillAntCalendarByInput(panel, el, value, runtime);
+    }
+
+    return false;
   }
 
   async function waitForDateLikePanel(runtime, timeoutMs) {
@@ -538,10 +541,15 @@
     }
 
     const okBtn = panel.querySelector?.(".ant-calendar-ok-btn");
-    if (okBtn?.click) {
-      okBtn.click();
-    } else if (okBtn?.dispatchEvent) {
-      okBtn.dispatchEvent(new Event("click", { bubbles: true }));
+    if (okBtn) {
+      const clicked = await dispatchRealClickSequence(okBtn, 50);
+      if (!clicked) {
+        if (okBtn?.click) {
+          okBtn.click();
+        } else if (okBtn?.dispatchEvent) {
+          okBtn.dispatchEvent(new Event("click", { bubbles: true }));
+        }
+      }
     }
 
     await sleep(50);
@@ -549,20 +557,24 @@
     return isNormalizedDateMatch(actual, value, runtime?.dateMode || "date");
   }
 
-  function openDateLikePanel(el) {
+  async function openDateLikePanel(el) {
     const trigger = findDateTriggerElement(el);
-    scrollIntoView(trigger || el);
-    trigger?.focus?.();
+    const target = trigger || el;
+    scrollIntoView(target);
+    target?.focus?.();
     el.focus?.();
-    if (trigger && typeof trigger.click === "function") {
-      trigger.click();
+    if (await dispatchRealClickSequence(target, 20)) {
+      return;
+    }
+    if (target && typeof target.click === "function") {
+      target.click();
       return;
     }
     if (typeof el.click === "function") {
       el.click();
       return;
     }
-    (trigger || el).dispatchEvent?.(new Event("click", { bubbles: true }));
+    target?.dispatchEvent?.(new Event("click", { bubbles: true }));
   }
 
   function findDateLikePanel(runtime) {
@@ -669,7 +681,7 @@
           currentYear > targetYear
             ? ".ant-calendar-prev-year-btn"
             : ".ant-calendar-next-year-btn";
-        if (!clickPanelButton(panel, selector)) return false;
+        if (!(await clickPanelButton(panel, selector))) return false;
         await sleep(10);
         continue;
       }
@@ -679,7 +691,7 @@
           currentMonth > targetMonth
             ? ".ant-calendar-prev-month-btn"
             : ".ant-calendar-next-month-btn";
-        if (!clickPanelButton(panel, selector)) return false;
+        if (!(await clickPanelButton(panel, selector))) return false;
         await sleep(10);
         continue;
       }
@@ -709,9 +721,12 @@
     return 0;
   }
 
-  function clickPanelButton(panel, selector) {
+  async function clickPanelButton(panel, selector) {
     const button = panel.querySelector?.(selector);
     if (!button) return false;
+    if (await dispatchRealClickSequence(button, 20)) {
+      return true;
+    }
     if (typeof button.click === "function") {
       button.click();
       return true;
@@ -730,7 +745,7 @@
     return !actualYear || actualYear === expectedYear;
   }
 
-  function clickDatePart(panel, part, expected) {
+  async function clickDatePart(panel, part, expected) {
     if (!expected) return false;
     const selectors =
       part === "month"
@@ -754,6 +769,9 @@
       const cell = cells.find((item) => matchDateCell(item, part, expected));
       if (!cell) continue;
 
+      if (await dispatchRealClickSequence(cell, 20)) {
+        return true;
+      }
       if (typeof cell.click === "function") {
         cell.click();
       } else {
@@ -779,6 +797,72 @@
       return true;
     }
     return false;
+  }
+
+  async function dispatchRealClickSequence(el, waitMs) {
+    if (!el || typeof el.dispatchEvent !== "function") return false;
+
+    const rect =
+      typeof el.getBoundingClientRect === "function"
+        ? el.getBoundingClientRect()
+        : { left: 0, top: 0, width: 0, height: 0 };
+    const centerX = Number(rect.left || 0) + Math.max(0, Number(rect.width || 0)) / 2;
+    const centerY = Number(rect.top || 0) + Math.max(0, Number(rect.height || 0)) / 2;
+    const eventInit = {
+      bubbles: true,
+      cancelable: true,
+      view: window,
+      clientX: centerX,
+      clientY: centerY,
+      screenX: centerX,
+      screenY: centerY,
+      button: 0,
+      buttons: 1,
+    };
+
+    try {
+      el.focus?.();
+    } catch (_) {
+      // ignore
+    }
+
+    try {
+      if (typeof PointerEvent === "function") {
+        el.dispatchEvent(new PointerEvent("pointerdown", eventInit));
+      }
+    } catch (_) {
+      // ignore
+    }
+
+    for (const type of ["mousedown", "mouseup", "click"]) {
+      el.dispatchEvent(createMouseLikeEvent(type, eventInit));
+      if (type !== "click") {
+        await sleep(12);
+      }
+    }
+
+    if ((waitMs || 0) > 0) {
+      await sleep(waitMs);
+    }
+    return true;
+  }
+
+  function createMouseLikeEvent(type, init) {
+    if (typeof MouseEvent === "function") {
+      return new MouseEvent(type, init);
+    }
+    const event = new Event(type, {
+      bubbles: init?.bubbles,
+      cancelable: init?.cancelable,
+    });
+    for (const [key, value] of Object.entries(init || {})) {
+      try {
+        event[key] = value;
+      } catch (_) {
+        // ignore
+      }
+    }
+    return event;
   }
 
   function dispatchTextInputEvent(el) {

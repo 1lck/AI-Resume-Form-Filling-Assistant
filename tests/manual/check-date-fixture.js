@@ -75,6 +75,9 @@ class MockInputElement {
 
   dispatchEvent(event) {
     this.events.push(event.type);
+    if (event.type === "click" && typeof this._onDispatchClick === "function") {
+      this._onDispatchClick(event);
+    }
     return true;
   }
 }
@@ -256,16 +259,39 @@ class MockCell {
 }
 
 class MockElementNode {
-  constructor(className = "", onClick = null) {
+  constructor(className = "", onClick = null, options = {}) {
     this.className = className;
     this._onClick = onClick;
+    this._strictMouseSequence = Boolean(options.strictMouseSequence);
+    this._mouseDownSeen = false;
+    this.events = [];
   }
 
   click() {
+    this.events.push("click()");
+    if (this._strictMouseSequence) return;
     if (this._onClick) this._onClick();
   }
 
   focus() {}
+
+  dispatchEvent(event) {
+    const type = event?.type || "";
+    this.events.push(type);
+    if (!this._strictMouseSequence) {
+      if (type === "click" && this._onClick) this._onClick();
+      return true;
+    }
+    if (type === "pointerdown" || type === "mousedown") {
+      this._mouseDownSeen = true;
+      return true;
+    }
+    if (type === "click" && this._mouseDownSeen) {
+      this._mouseDownSeen = false;
+      if (this._onClick) this._onClick();
+    }
+    return true;
+  }
 }
 
 class MockPanel {
@@ -339,10 +365,13 @@ class MockKeyboardConfirmInput extends MockInputElement {
 }
 
 class MockAntCell {
-  constructor(title, text, onClick) {
+  constructor(title, text, onClick, options = {}) {
     this._title = title;
     this.textContent = text;
     this._onClick = onClick;
+    this._strictMouseSequence = Boolean(options.strictMouseSequence);
+    this._mouseDownSeen = false;
+    this.events = [];
   }
 
   getAttribute(name) {
@@ -351,18 +380,40 @@ class MockAntCell {
   }
 
   click() {
+    this.events.push("click()");
+    if (this._strictMouseSequence) return;
     this._onClick();
+  }
+
+  dispatchEvent(event) {
+    const type = event?.type || "";
+    this.events.push(type);
+    if (!this._strictMouseSequence) {
+      if (type === "click") this._onClick();
+      return true;
+    }
+    if (type === "pointerdown" || type === "mousedown") {
+      this._mouseDownSeen = true;
+      return true;
+    }
+    if (type === "click" && this._mouseDownSeen) {
+      this._mouseDownSeen = false;
+      this._onClick();
+    }
+    return true;
   }
 }
 
 class MockAntPanel {
-  constructor(input) {
+  constructor(input, options = {}) {
     this.input = input;
     this.open = false;
     this.className = "ant-calendar-picker-container";
     this.year = 2026;
     this.month = 3;
     this.pendingValue = "";
+    this._strictMouseSequence = Boolean(options.strictMouseSequence);
+    this._supportsPanelInput = options.supportsPanelInput !== false;
     this._yearNode = new MockTextNode(`${this.year}年`);
     this._monthNode = new MockTextNode(`${this.month}月`);
     this._inputNode = new MockInputElement("text");
@@ -373,15 +424,15 @@ class MockAntPanel {
       this.input.value = finalValue;
       this.input.lockProgrammaticWrite = true;
       this.open = false;
-    });
+    }, { strictMouseSequence: this._strictMouseSequence });
     this._prevYearBtn = new MockElementNode("ant-calendar-prev-year-btn", () => {
       this.year -= 1;
       this.syncHeader();
-    });
+    }, { strictMouseSequence: this._strictMouseSequence });
     this._nextYearBtn = new MockElementNode("ant-calendar-next-year-btn", () => {
       this.year += 1;
       this.syncHeader();
-    });
+    }, { strictMouseSequence: this._strictMouseSequence });
     this._prevMonthBtn = new MockElementNode("ant-calendar-prev-month-btn", () => {
       this.month -= 1;
       if (this.month < 1) {
@@ -389,7 +440,7 @@ class MockAntPanel {
         this.year -= 1;
       }
       this.syncHeader();
-    });
+    }, { strictMouseSequence: this._strictMouseSequence });
     this._nextMonthBtn = new MockElementNode("ant-calendar-next-month-btn", () => {
       this.month += 1;
       if (this.month > 12) {
@@ -397,7 +448,7 @@ class MockAntPanel {
         this.year += 1;
       }
       this.syncHeader();
-    });
+    }, { strictMouseSequence: this._strictMouseSequence });
   }
 
   syncHeader() {
@@ -417,7 +468,9 @@ class MockAntPanel {
   querySelector(selector) {
     if (selector === ".ant-calendar-year-select") return this._yearNode;
     if (selector === ".ant-calendar-month-select") return this._monthNode;
-    if (selector === ".ant-calendar-input") return this._inputNode;
+    if (selector === ".ant-calendar-input") {
+      return this._supportsPanelInput ? this._inputNode : null;
+    }
     if (selector === ".ant-calendar-ok-btn") return this._okBtn;
     if (selector === ".ant-calendar-prev-year-btn") return this._prevYearBtn;
     if (selector === ".ant-calendar-next-year-btn") return this._nextYearBtn;
@@ -431,15 +484,21 @@ class MockAntPanel {
       selector === ".ant-calendar-cell .ant-calendar-date" ||
       selector === ".ant-calendar-date"
     ) {
-      return ["19", "20", "21", "22"].map(
+      return ["05", "19", "20", "21", "22"].map(
         (day) =>
           new MockAntCell(
             `${this.year}-${String(this.month).padStart(2, "0")}-${day}`,
             String(Number(day)),
             () => {
-              this.pendingValue = `${this.year}-${String(this.month).padStart(2, "0")}-${day}`;
-              this._inputNode.value = this.pendingValue;
-            }
+              const finalValue = `${this.year}-${String(this.month).padStart(2, "0")}-${day}`;
+              this.pendingValue = finalValue;
+              this._inputNode.value = finalValue;
+              this.input.lockProgrammaticWrite = false;
+              this.input.value = finalValue;
+              this.input.lockProgrammaticWrite = true;
+              this.open = false;
+            },
+            { strictMouseSequence: this._strictMouseSequence }
           )
       );
     }
@@ -456,6 +515,9 @@ class MockAntPanel {
   panelInput.lockProgrammaticWrite = true;
   const panel = new MockPanel(panelInput);
   panelInput.click = () => {
+    panel.open = true;
+  };
+  panelInput._onDispatchClick = () => {
     panel.open = true;
   };
 
@@ -597,6 +659,62 @@ class MockAntPanel {
     process.exit(1);
   }
 
+  const strictAntInput = new MockInputElement("text");
+  strictAntInput.lockProgrammaticWrite = true;
+  strictAntInput.attributes.name = "birthdate";
+  const strictAntPanel = new MockAntPanel(strictAntInput, {
+    strictMouseSequence: true,
+    supportsPanelInput: false,
+  });
+  let strictAntPanelVisible = false;
+  const strictAntWrapper = new MockElementNode(
+    "ant-calendar-picker",
+    () => {
+      strictAntPanel.open = true;
+      strictAntPanelVisible = true;
+    },
+    { strictMouseSequence: true }
+  );
+  strictAntInput.closest = (selector) =>
+    selector === ".ant-calendar-picker" ? strictAntWrapper : null;
+  strictAntInput.parentElement = {
+    querySelector: (selector) =>
+      selector === ".ant-calendar-picker-icon"
+        ? new MockElementNode(
+            "ant-calendar-picker-icon",
+            () => {
+              strictAntPanel.open = true;
+              strictAntPanelVisible = true;
+            },
+            { strictMouseSequence: true }
+          )
+        : null,
+  };
+
+  context.document.querySelectorAll = (selector) => {
+    if (selector === ".ant-calendar-picker-container" || selector === ".ant-calendar") {
+      return strictAntPanelVisible ? [strictAntPanel] : [];
+    }
+    return [];
+  };
+
+  const strictAntResult = await hooks.fillDateLikeField(
+    { kind: "date_like", el: strictAntInput, dateMode: "date", framework: "ant" },
+    "2002-07-05"
+  );
+
+  if (!strictAntResult.filled || strictAntInput.value !== "2002-07-05") {
+    console.error("Strict ant calendar click-path fill failed", {
+      strictAntResult,
+      value: strictAntInput.value,
+      panelVisible: strictAntPanelVisible,
+      wrapperEvents: strictAntWrapper.events,
+      prevYearEvents: strictAntPanel._prevYearBtn.events,
+      prevMonthEvents: strictAntPanel._prevMonthBtn.events,
+    });
+    process.exit(1);
+  }
+
   console.log(
     JSON.stringify(
       {
@@ -611,6 +729,7 @@ class MockAntPanel {
         panelFill: panelInput.value,
         antFill: antInput.value,
         delayedAntFill: delayedAntInput.value,
+        strictAntFill: strictAntInput.value,
         status: "panel-fill-ok",
       },
       null,
