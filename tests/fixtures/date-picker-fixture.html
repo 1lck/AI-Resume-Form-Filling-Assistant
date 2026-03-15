@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Date Picker Fixture</title>
+    <style>
+      body {
+        font-family: sans-serif;
+        margin: 24px;
+        line-height: 1.5;
+      }
+
+      .field {
+        margin-bottom: 20px;
+      }
+
+      .mock-panel {
+        display: none;
+        border: 1px solid #ccc;
+        padding: 12px;
+        width: 280px;
+        background: #fafafa;
+      }
+
+      .mock-panel.open {
+        display: block;
+      }
+
+      .month-grid,
+      .day-grid {
+        display: grid;
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+        gap: 8px;
+        margin-top: 8px;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>Date Picker Fixture</h1>
+
+    <div class="field">
+      <label for="nativeBirthDate">出生日期</label>
+      <input
+        id="nativeBirthDate"
+        data-test="native-date"
+        type="date"
+        name="birthDate"
+      />
+    </div>
+
+    <div class="field">
+      <label for="nativeBirthMonth">出生年月</label>
+      <input
+        id="nativeBirthMonth"
+        data-test="native-month"
+        type="month"
+        name="birthMonth"
+      />
+    </div>
+
+    <div class="field mock-picker" data-test="panel-picker">
+      <label for="mockBirthPickerInput">出生日期面板控件</label>
+      <input
+        id="mockBirthPickerInput"
+        class="mock-date-input"
+        name="birthdayPicker"
+        placeholder="请选择出生日期"
+        readonly
+      />
+      <button id="mockBirthPickerToggle" type="button">打开日期面板</button>
+      <input id="mockBirthPickerHidden" type="hidden" value="" />
+
+      <div
+        id="mockBirthPickerPanel"
+        class="mock-panel"
+        data-role="mock-date-panel"
+        aria-hidden="true"
+      >
+        <div>年份：<span data-role="selected-year">1999</span></div>
+
+        <div class="month-grid">
+          <button type="button" data-role="month-cell" data-month="08">08月</button>
+          <button type="button" data-role="month-cell" data-month="09">09月</button>
+          <button type="button" data-role="month-cell" data-month="10">10月</button>
+          <button type="button" data-role="month-cell" data-month="11">11月</button>
+        </div>
+
+        <div class="day-grid">
+          <button type="button" data-role="day-cell" data-day="19">19</button>
+          <button type="button" data-role="day-cell" data-day="20">20</button>
+          <button type="button" data-role="day-cell" data-day="21">21</button>
+          <button type="button" data-role="day-cell" data-day="22">22</button>
+        </div>
+      </div>
+    </div>
+
+    <script>
+      (function () {
+        const toggle = document.getElementById("mockBirthPickerToggle");
+        const panel = document.getElementById("mockBirthPickerPanel");
+        const input = document.getElementById("mockBirthPickerInput");
+        const hidden = document.getElementById("mockBirthPickerHidden");
+        const state = { year: "1999", month: "", day: "" };
+
+        function render() {
+          const value =
+            state.month && state.day
+              ? `${state.year}-${state.month}-${state.day}`
+              : "";
+          input.value = value;
+          hidden.value = value;
+          input.dispatchEvent(new Event("input", { bubbles: true }));
+          input.dispatchEvent(new Event("change", { bubbles: true }));
+        }
+
+        toggle.addEventListener("click", () => {
+          panel.classList.toggle("open");
+          panel.setAttribute(
+            "aria-hidden",
+            panel.classList.contains("open") ? "false" : "true"
+          );
+        });
+
+        panel.querySelectorAll('[data-role="month-cell"]').forEach((button) => {
+          button.addEventListener("click", () => {
+            state.month = button.dataset.month || "";
+          });
+        });
+
+        panel.querySelectorAll('[data-role="day-cell"]').forEach((button) => {
+          button.addEventListener("click", () => {
+            state.day = button.dataset.day || "";
+            render();
+            panel.classList.remove("open");
+            panel.setAttribute("aria-hidden", "true");
+          });
+        });
+      })();
+    </script>
+  </body>
+</html>
