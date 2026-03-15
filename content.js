@@ -482,12 +482,14 @@
     const parts = splitNormalizedDateValue(value, runtime?.dateMode || "date");
     if (!parts) return false;
 
-    if (!panelMatchesYear(panel, parts.year)) {
+    if (!(await prepareDatePanel(panel, runtime, parts))) {
       return false;
     }
 
-    if (!clickDatePart(panel, "month", parts.month)) {
-      return false;
+    if ((runtime?.framework || "") !== "ant") {
+      if (!clickDatePart(panel, "month", parts.month)) {
+        return false;
+      }
     }
 
     if ((runtime?.dateMode || "date") !== "month") {
@@ -501,19 +503,34 @@
     return isNormalizedDateMatch(actual, value, runtime?.dateMode || "date");
   }
 
+  async function prepareDatePanel(panel, runtime, parts) {
+    if ((runtime?.framework || "") === "ant") {
+      return syncAntCalendarPanel(panel, parts);
+    }
+    return panelMatchesYear(panel, parts.year);
+  }
+
   function openDateLikePanel(el) {
-    scrollIntoView(el);
+    const trigger = findDateTriggerElement(el);
+    scrollIntoView(trigger || el);
+    trigger?.focus?.();
     el.focus?.();
+    if (trigger && typeof trigger.click === "function") {
+      trigger.click();
+      return;
+    }
     if (typeof el.click === "function") {
       el.click();
       return;
     }
-    el.dispatchEvent?.(new Event("click", { bubbles: true }));
+    (trigger || el).dispatchEvent?.(new Event("click", { bubbles: true }));
   }
 
   function findDateLikePanel(runtime) {
     const selectors = [
       '[data-role="mock-date-panel"]',
+      ".ant-calendar-picker-container",
+      ".ant-calendar",
       ".ant-picker-dropdown",
       ".el-picker-panel",
       ".flatpickr-calendar",
@@ -528,6 +545,17 @@
       if (visible) return visible;
     }
     return null;
+  }
+
+  function findDateTriggerElement(el) {
+    if (!el) return null;
+    const antWrapper = el.closest?.(".ant-calendar-picker");
+    if (antWrapper) return antWrapper;
+
+    const antIcon = el.parentElement?.querySelector?.(".ant-calendar-picker-icon");
+    if (antIcon) return antIcon;
+
+    return el;
   }
 
   function isDatePanelVisible(panel, runtime) {
@@ -571,9 +599,78 @@
     };
   }
 
+  async function syncAntCalendarPanel(panel, parts) {
+    const targetYear = Number(parts?.year || 0);
+    const targetMonth = Number(parts?.month || 0);
+    if (!targetYear || !targetMonth) return false;
+
+    for (let i = 0; i < 240; i += 1) {
+      const currentYear = readAntCalendarYear(panel);
+      const currentMonth = readAntCalendarMonth(panel);
+      if (currentYear === targetYear && currentMonth === targetMonth) {
+        return true;
+      }
+
+      if (currentYear && currentYear !== targetYear) {
+        const selector =
+          currentYear > targetYear
+            ? ".ant-calendar-prev-year-btn"
+            : ".ant-calendar-next-year-btn";
+        if (!clickPanelButton(panel, selector)) return false;
+        await sleep(10);
+        continue;
+      }
+
+      if (currentMonth && currentMonth !== targetMonth) {
+        const selector =
+          currentMonth > targetMonth
+            ? ".ant-calendar-prev-month-btn"
+            : ".ant-calendar-next-month-btn";
+        if (!clickPanelButton(panel, selector)) return false;
+        await sleep(10);
+        continue;
+      }
+
+      return false;
+    }
+
+    return false;
+  }
+
+  function readAntCalendarYear(panel) {
+    const text = String(
+      panel.querySelector?.(".ant-calendar-year-select")?.textContent || ""
+    );
+    const match = text.match(/\d{4}/);
+    return match ? Number(match[0]) : 0;
+  }
+
+  function readAntCalendarMonth(panel) {
+    const text = normalizeText(
+      panel.querySelector?.(".ant-calendar-month-select")?.textContent || ""
+    );
+    const zhMatch = text.match(/(\d{1,2})月/);
+    if (zhMatch) return Number(zhMatch[1]);
+    const plainMatch = text.match(/^(\d{1,2})$/);
+    if (plainMatch) return Number(plainMatch[1]);
+    return 0;
+  }
+
+  function clickPanelButton(panel, selector) {
+    const button = panel.querySelector?.(selector);
+    if (!button) return false;
+    if (typeof button.click === "function") {
+      button.click();
+      return true;
+    }
+    button.dispatchEvent?.(new Event("click", { bubbles: true }));
+    return true;
+  }
+
   function panelMatchesYear(panel, expectedYear) {
     const yearEl =
       panel.querySelector?.('[data-role="selected-year"]') ||
+      panel.querySelector?.(".ant-calendar-year-select") ||
       panel.querySelector?.('[class*="year"]');
     if (!yearEl) return true;
     const actualYear = String(yearEl.textContent || "").match(/\d{4}/)?.[0] || "";
@@ -584,8 +681,20 @@
     if (!expected) return false;
     const selectors =
       part === "month"
-        ? ['[data-role="month-cell"]', '[data-month]', '[class*="month"]']
-        : ['[data-role="day-cell"]', '[data-day]', '[class*="day"]'];
+        ? [
+            '[data-role="month-cell"]',
+            "[data-month]",
+            ".ant-calendar-month-panel-cell .ant-calendar-month-panel-month",
+            ".ant-calendar-month-panel-month",
+            '[class*="month"]',
+          ]
+        : [
+            '[data-role="day-cell"]',
+            "[data-day]",
+            ".ant-calendar-cell .ant-calendar-date",
+            ".ant-calendar-date",
+            '[class*="day"]',
+          ];
 
     for (const selector of selectors) {
       const cells = Array.from(panel.querySelectorAll?.(selector) || []);
@@ -607,9 +716,15 @@
     const attrName = part === "month" ? "data-month" : "data-day";
     const attrValue = String(cell.getAttribute?.(attrName) || "").trim();
     const text = normalizeText(cell.textContent || "");
+    const title = String(cell.getAttribute?.("title") || "").trim();
     if (attrValue === expected) return true;
+    if (title === expected) return true;
+    if (title.endsWith(`-${expected}`)) return true;
     if (text === expected) return true;
     if (text === String(Number(expected))) return true;
+    if (part === "month" && (text === `${expected}月` || text === `${Number(expected)}月`)) {
+      return true;
+    }
     return false;
   }
 
@@ -727,7 +842,7 @@
     }
 
     const text = candidates.join(" ").toLowerCase();
-    if (text.includes("ant-picker")) return "ant";
+    if (text.includes("ant-picker") || text.includes("ant-calendar-picker")) return "ant";
     if (text.includes("el-date-editor") || text.includes("el-picker")) return "element";
     if (text.includes("flatpickr")) return "flatpickr";
     if (text.includes("mui")) return "mui";

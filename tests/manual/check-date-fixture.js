@@ -199,6 +199,19 @@ class MockCell {
   }
 }
 
+class MockElementNode {
+  constructor(className = "", onClick = null) {
+    this.className = className;
+    this._onClick = onClick;
+  }
+
+  click() {
+    if (this._onClick) this._onClick();
+  }
+
+  focus() {}
+}
+
 class MockPanel {
   constructor(input) {
     this.input = input;
@@ -269,6 +282,105 @@ class MockKeyboardConfirmInput extends MockInputElement {
   }
 }
 
+class MockAntCell {
+  constructor(title, text, onClick) {
+    this._title = title;
+    this.textContent = text;
+    this._onClick = onClick;
+  }
+
+  getAttribute(name) {
+    if (name === "title") return this._title;
+    return "";
+  }
+
+  click() {
+    this._onClick();
+  }
+}
+
+class MockAntPanel {
+  constructor(input) {
+    this.input = input;
+    this.open = false;
+    this.className = "ant-calendar-picker-container";
+    this.year = 2026;
+    this.month = 3;
+    this._yearNode = new MockTextNode(`${this.year}年`);
+    this._monthNode = new MockTextNode(`${this.month}月`);
+    this._prevYearBtn = new MockElementNode("ant-calendar-prev-year-btn", () => {
+      this.year -= 1;
+      this.syncHeader();
+    });
+    this._nextYearBtn = new MockElementNode("ant-calendar-next-year-btn", () => {
+      this.year += 1;
+      this.syncHeader();
+    });
+    this._prevMonthBtn = new MockElementNode("ant-calendar-prev-month-btn", () => {
+      this.month -= 1;
+      if (this.month < 1) {
+        this.month = 12;
+        this.year -= 1;
+      }
+      this.syncHeader();
+    });
+    this._nextMonthBtn = new MockElementNode("ant-calendar-next-month-btn", () => {
+      this.month += 1;
+      if (this.month > 12) {
+        this.month = 1;
+        this.year += 1;
+      }
+      this.syncHeader();
+    });
+  }
+
+  syncHeader() {
+    this._yearNode.textContent = `${this.year}年`;
+    this._monthNode.textContent = `${this.month}月`;
+  }
+
+  getAttribute(name) {
+    if (name === "aria-hidden") return this.open ? "false" : "true";
+    return "";
+  }
+
+  contains() {
+    return false;
+  }
+
+  querySelector(selector) {
+    if (selector === ".ant-calendar-year-select") return this._yearNode;
+    if (selector === ".ant-calendar-month-select") return this._monthNode;
+    if (selector === ".ant-calendar-prev-year-btn") return this._prevYearBtn;
+    if (selector === ".ant-calendar-next-year-btn") return this._nextYearBtn;
+    if (selector === ".ant-calendar-prev-month-btn") return this._prevMonthBtn;
+    if (selector === ".ant-calendar-next-month-btn") return this._nextMonthBtn;
+    return null;
+  }
+
+  querySelectorAll(selector) {
+    if (
+      selector === ".ant-calendar-cell .ant-calendar-date" ||
+      selector === ".ant-calendar-date"
+    ) {
+      return ["19", "20", "21", "22"].map(
+        (day) =>
+          new MockAntCell(
+            `${this.year}-${String(this.month).padStart(2, "0")}-${day}`,
+            String(Number(day)),
+            () => {
+              this.input.lockProgrammaticWrite = false;
+              this.input.value = `${this.year}-${String(this.month).padStart(2, "0")}-${day}`;
+              this.input.lockProgrammaticWrite = true;
+              this.open = false;
+            }
+          )
+      );
+    }
+    return [];
+  }
+}
+
 (async () => {
   const nativeDateInput = new MockInputElement("date");
   const nativeMonthInput = new MockInputElement("month");
@@ -281,7 +393,28 @@ class MockKeyboardConfirmInput extends MockInputElement {
     panel.open = true;
   };
 
+  const antInput = new MockInputElement("text");
+  antInput.lockProgrammaticWrite = true;
+  antInput.attributes.name = "birthdate";
+  const antPanel = new MockAntPanel(antInput);
+  const antWrapper = new MockElementNode("ant-calendar-picker", () => {
+    antPanel.open = true;
+  });
+  antInput.closest = (selector) =>
+    selector === ".ant-calendar-picker" ? antWrapper : null;
+  antInput.parentElement = {
+    querySelector: (selector) =>
+      selector === ".ant-calendar-picker-icon"
+        ? new MockElementNode("ant-calendar-picker-icon", () => {
+            antPanel.open = true;
+          })
+        : null,
+  };
+
   context.document.querySelectorAll = (selector) => {
+    if (selector === ".ant-calendar-picker-container" || selector === ".ant-calendar") {
+      return [antPanel];
+    }
     if (selector.includes("picker") || selector.includes("calendar") || selector.includes("mock-date-panel")) {
       return [panel];
     }
@@ -336,6 +469,19 @@ class MockKeyboardConfirmInput extends MockInputElement {
     process.exit(1);
   }
 
+  const antResult = await hooks.fillDateLikeField(
+    { kind: "date_like", el: antInput, dateMode: "date", framework: "ant" },
+    "1999-08-21"
+  );
+
+  if (!antResult.filled || antInput.value !== "1999-08-21") {
+    console.error("Ant calendar date fill failed", {
+      antResult,
+      value: antInput.value,
+    });
+    process.exit(1);
+  }
+
   console.log(
     JSON.stringify(
       {
@@ -347,6 +493,7 @@ class MockKeyboardConfirmInput extends MockInputElement {
         keyboardConfirmFill: keyboardConfirmInput.value,
         keyboardConfirmEvents: keyboardConfirmInput.events,
         panelFill: panelInput.value,
+        antFill: antInput.value,
         status: "panel-fill-ok",
       },
       null,
