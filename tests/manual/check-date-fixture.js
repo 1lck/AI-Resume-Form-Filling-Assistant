@@ -548,6 +548,55 @@ class MockAntPanel {
     process.exit(1);
   }
 
+  const delayedAntInput = new MockInputElement("text");
+  delayedAntInput.lockProgrammaticWrite = true;
+  delayedAntInput.attributes.name = "birthdate";
+  const delayedAntPanel = new MockAntPanel(delayedAntInput);
+  let delayedAntPanelVisible = false;
+  const delayedAntWrapper = new MockElementNode("ant-calendar-picker", () => {
+    setTimeout(() => {
+      delayedAntPanel.open = true;
+      delayedAntPanelVisible = true;
+    }, 120);
+  });
+  delayedAntInput.closest = (selector) =>
+    selector === ".ant-calendar-picker" ? delayedAntWrapper : null;
+  delayedAntInput.parentElement = {
+    querySelector: (selector) =>
+      selector === ".ant-calendar-picker-icon"
+        ? new MockElementNode("ant-calendar-picker-icon", () => {
+            setTimeout(() => {
+              delayedAntPanel.open = true;
+              delayedAntPanelVisible = true;
+            }, 120);
+          })
+        : null,
+  };
+
+  context.document.querySelectorAll = (selector) => {
+    if (selector === ".ant-calendar-picker-container" || selector === ".ant-calendar") {
+      return delayedAntPanelVisible ? [delayedAntPanel] : [];
+    }
+    if (selector.includes("calendar")) {
+      return [delayedAntWrapper];
+    }
+    return [];
+  };
+
+  const delayedAntResult = await hooks.fillDateLikeField(
+    { kind: "date_like", el: delayedAntInput, dateMode: "date", framework: "ant" },
+    "2002-07-05"
+  );
+
+  if (!delayedAntResult.filled || delayedAntInput.value !== "2002-07-05") {
+    console.error("Delayed ant calendar date fill failed", {
+      delayedAntResult,
+      value: delayedAntInput.value,
+      panelVisible: delayedAntPanelVisible,
+    });
+    process.exit(1);
+  }
+
   console.log(
     JSON.stringify(
       {
@@ -561,6 +610,7 @@ class MockAntPanel {
         keyboardConfirmEvents: keyboardConfirmInput.events,
         panelFill: panelInput.value,
         antFill: antInput.value,
+        delayedAntFill: delayedAntInput.value,
         status: "panel-fill-ok",
       },
       null,

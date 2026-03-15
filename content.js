@@ -474,7 +474,7 @@
     if (!el) return false;
 
     openDateLikePanel(el);
-    const panel = await waitForDateLikePanel(runtime, 600);
+    const panel = await waitForDateLikePanel(runtime, 1200);
     if (!panel) return false;
 
     if ((runtime?.framework || "") === "ant") {
@@ -566,7 +566,28 @@
   }
 
   function findDateLikePanel(runtime) {
-    const selectors = [
+    const selectors = getDateLikePanelSelectors(runtime);
+
+    for (const selector of selectors) {
+      const panels = Array.from(document.querySelectorAll(selector) || []);
+      const visible = panels.find((panel) => isDatePanelVisible(panel, runtime));
+      if (visible) return visible;
+    }
+    return null;
+  }
+
+  function getDateLikePanelSelectors(runtime) {
+    const framework = String(runtime?.framework || "");
+    if (framework === "ant") {
+      return [
+        '[data-role="mock-date-panel"]',
+        ".ant-calendar-picker-container",
+        ".ant-calendar",
+        ".ant-picker-dropdown",
+      ];
+    }
+
+    return [
       '[data-role="mock-date-panel"]',
       ".ant-calendar-picker-container",
       ".ant-calendar",
@@ -577,13 +598,6 @@
       '[class*="datepicker"]',
       '[class*="calendar"]',
     ];
-
-    for (const selector of selectors) {
-      const panels = Array.from(document.querySelectorAll(selector) || []);
-      const visible = panels.find((panel) => isDatePanelVisible(panel, runtime));
-      if (visible) return visible;
-    }
-    return null;
   }
 
   function findDateTriggerElement(el) {
