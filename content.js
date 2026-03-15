@@ -364,7 +364,7 @@
     return String(value);
   }
 
-  function fillDateLikeField(runtime, value) {
+  async function fillDateLikeField(runtime, value) {
     const normalized = normalizeDateLikeValue(value, runtime);
     if (!normalized.ok) {
       return { filled: false, message: normalized.message };
@@ -373,8 +373,12 @@
     const el = runtime?.el;
     if (!el) return { filled: false, message: "日期字段不存在" };
 
-    const ok = setDateValueWithEvents(el, normalized.value, runtime);
-    return ok
+    if (setDateValueWithEvents(el, normalized.value, runtime)) {
+      return { filled: true };
+    }
+
+    const panelOk = await fillDateLikeByPanel(runtime, normalized.value);
+    return panelOk
       ? { filled: true }
       : { filled: false, message: "日期写入失败" };
   }
@@ -462,6 +466,150 @@
       console.warn(EXT_TAG, "日期写入失败", e);
       return false;
     }
+  }
+
+  async function fillDateLikeByPanel(runtime, value) {
+    const el = runtime?.el;
+    if (!el) return false;
+
+    openDateLikePanel(el);
+    await sleep(20);
+
+    const panel = findDateLikePanel(runtime);
+    if (!panel) return false;
+
+    const parts = splitNormalizedDateValue(value, runtime?.dateMode || "date");
+    if (!parts) return false;
+
+    if (!panelMatchesYear(panel, parts.year)) {
+      return false;
+    }
+
+    if (!clickDatePart(panel, "month", parts.month)) {
+      return false;
+    }
+
+    if ((runtime?.dateMode || "date") !== "month") {
+      if (!clickDatePart(panel, "day", parts.day)) {
+        return false;
+      }
+    }
+
+    await sleep(20);
+    const actual = String(el.value || "").trim();
+    return isNormalizedDateMatch(actual, value, runtime?.dateMode || "date");
+  }
+
+  function openDateLikePanel(el) {
+    scrollIntoView(el);
+    el.focus?.();
+    if (typeof el.click === "function") {
+      el.click();
+      return;
+    }
+    el.dispatchEvent?.(new Event("click", { bubbles: true }));
+  }
+
+  function findDateLikePanel(runtime) {
+    const selectors = [
+      '[data-role="mock-date-panel"]',
+      ".ant-picker-dropdown",
+      ".el-picker-panel",
+      ".flatpickr-calendar",
+      '[class*="picker-panel"]',
+      '[class*="datepicker"]',
+      '[class*="calendar"]',
+    ];
+
+    for (const selector of selectors) {
+      const panels = Array.from(document.querySelectorAll(selector) || []);
+      const visible = panels.find((panel) => isDatePanelVisible(panel, runtime));
+      if (visible) return visible;
+    }
+    return null;
+  }
+
+  function isDatePanelVisible(panel, runtime) {
+    if (!panel) return false;
+    const ariaHidden = panel.getAttribute?.("aria-hidden");
+    if (ariaHidden === "true") return false;
+
+    if (panel.classList?.contains?.("open")) return true;
+
+    const owner = runtime?.el;
+    if (owner && panel.contains?.(owner)) return true;
+
+    try {
+      const style = getComputedStyle(panel);
+      if (style.display === "none" || style.visibility === "hidden") return false;
+    } catch (_) {
+      // ignore
+    }
+
+    return true;
+  }
+
+  function splitNormalizedDateValue(value, mode) {
+    const text = String(value || "").trim();
+    if (!text) return null;
+
+    if (mode === "month") {
+      const match = text.match(/^(\d{4})-(\d{2})$/);
+      if (!match) return null;
+      return { year: match[1], month: match[2], day: "" };
+    }
+
+    const match = text.match(/^(\d{4})-(\d{2})-(\d{2})(?:T(\d{2}):(\d{2}))?$/);
+    if (!match) return null;
+    return {
+      year: match[1],
+      month: match[2],
+      day: match[3],
+      hour: match[4] || "",
+      minute: match[5] || "",
+    };
+  }
+
+  function panelMatchesYear(panel, expectedYear) {
+    const yearEl =
+      panel.querySelector?.('[data-role="selected-year"]') ||
+      panel.querySelector?.('[class*="year"]');
+    if (!yearEl) return true;
+    const actualYear = String(yearEl.textContent || "").match(/\d{4}/)?.[0] || "";
+    return !actualYear || actualYear === expectedYear;
+  }
+
+  function clickDatePart(panel, part, expected) {
+    if (!expected) return false;
+    const selectors =
+      part === "month"
+        ? ['[data-role="month-cell"]', '[data-month]', '[class*="month"]']
+        : ['[data-role="day-cell"]', '[data-day]', '[class*="day"]'];
+
+    for (const selector of selectors) {
+      const cells = Array.from(panel.querySelectorAll?.(selector) || []);
+      const cell = cells.find((item) => matchDateCell(item, part, expected));
+      if (!cell) continue;
+
+      if (typeof cell.click === "function") {
+        cell.click();
+      } else {
+        cell.dispatchEvent?.(new Event("click", { bubbles: true }));
+      }
+      return true;
+    }
+    return false;
+  }
+
+  function matchDateCell(cell, part, expected) {
+    if (!cell) return false;
+    const attrName = part === "month" ? "data-month" : "data-day";
+    const attrValue = String(cell.getAttribute?.(attrName) || "").trim();
+    const text = normalizeText(cell.textContent || "");
+    if (attrValue === expected) return true;
+    if (text === expected) return true;
+    if (text === String(Number(expected))) return true;
+    return false;
   }
 
   function dispatchTextInputEvent(el) {

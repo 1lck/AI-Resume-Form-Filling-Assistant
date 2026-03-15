@@ -83,6 +83,7 @@ Object.defineProperty(MockInputElement.prototype, "value", {
     return this._value || "";
   },
   set(value) {
+    if (this.lockProgrammaticWrite) return;
     this._value = String(value);
   },
   configurable: true,
@@ -170,10 +171,100 @@ if (invalidDate.ok) {
   process.exit(1);
 }
 
+class MockTextNode {
+  constructor(text) {
+    this.textContent = text;
+  }
+}
+
+class MockCell {
+  constructor(attrName, attrValue, text, onClick) {
+    this._attrName = attrName;
+    this._attrValue = attrValue;
+    this.textContent = text;
+    this.onClick = onClick;
+  }
+
+  getAttribute(name) {
+    return name === this._attrName ? this._attrValue : "";
+  }
+
+  click() {
+    this.onClick();
+  }
+}
+
+class MockPanel {
+  constructor(input) {
+    this.input = input;
+    this.year = "1999";
+    this.month = "";
+    this.day = "";
+    this.open = false;
+    this.classList = {
+      contains: (name) => name === "open" && this.open,
+    };
+    this._yearNode = new MockTextNode(this.year);
+    this._monthCells = ["08", "09", "10", "11"].map(
+      (month) =>
+        new MockCell("data-month", month, `${month}月`, () => {
+          this.month = month;
+        })
+    );
+    this._dayCells = ["19", "20", "21", "22"].map(
+      (day) =>
+        new MockCell("data-day", day, String(Number(day)), () => {
+          this.day = day;
+          this.input.lockProgrammaticWrite = false;
+          this.input.value = `${this.year}-${this.month}-${this.day}`;
+          this.input.lockProgrammaticWrite = true;
+          this.open = false;
+        })
+    );
+  }
+
+  getAttribute(name) {
+    if (name === "aria-hidden") return this.open ? "false" : "true";
+    return "";
+  }
+
+  contains() {
+    return false;
+  }
+
+  querySelector(selector) {
+    if (selector === '[data-role="selected-year"]') return this._yearNode;
+    return null;
+  }
+
+  querySelectorAll(selector) {
+    if (selector === '[data-role="month-cell"]' || selector === "[data-month]") {
+      return this._monthCells;
+    }
+    if (selector === '[data-role="day-cell"]' || selector === "[data-day]") {
+      return this._dayCells;
+    }
+    return [];
+  }
+}
+
 (async () => {
   const nativeDateInput = new MockInputElement("date");
   const nativeMonthInput = new MockInputElement("month");
 
+  const panelInput = new MockInputElement("text");
+  panelInput.lockProgrammaticWrite = true;
+  const panel = new MockPanel(panelInput);
+  panelInput.click = () => {
+    panel.open = true;
+  };
+
+  context.document.querySelectorAll = (selector) => {
+    if (selector.includes("picker") || selector.includes("calendar") || selector.includes("mock-date-panel")) {
+      return [panel];
+    }
+    return [];
+  };
   const dateResult = await hooks.fillDateLikeField(
     { kind: "date_like", el: nativeDateInput, dateMode: "date" },
     "1999/8/21"
@@ -196,6 +287,19 @@ if (invalidDate.ok) {
     process.exit(1);
   }
 
+  const panelResult = await hooks.fillDateLikeField(
+    { kind: "date_like", el: panelInput, dateMode: "date", framework: "generic" },
+    "1999-08-21"
+  );
+
+  if (!panelResult.filled || panelInput.value !== "1999-08-21") {
+    console.error("Panel date fill failed", {
+      panelResult,
+      value: panelInput.value,
+    });
+    process.exit(1);
+  }
+
   console.log(
     JSON.stringify(
       {
@@ -204,7 +308,8 @@ if (invalidDate.ok) {
         nativeMonthFill: nativeMonthInput.value,
         nativeDateEvents: nativeDateInput.events,
         nativeMonthEvents: nativeMonthInput.events,
-        status: "native-fill-ok",
+        panelFill: panelInput.value,
+        status: "panel-fill-ok",
       },
       null,
       2
