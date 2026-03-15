@@ -334,6 +334,10 @@
       return ok ? { filled: true } : { filled: false, message: "未找到可匹配的下拉选项" };
     }
 
+    if (kind === "date_like") {
+      return fillDateLikeField(runtime, value);
+    }
+
     if (kind === "contenteditable") {
       const desired = String(value || "");
       if (!desired) return { filled: false, message: "AI 未给出填写内容" };
@@ -358,6 +362,146 @@
     if (Array.isArray(value)) return JSON.stringify(value);
     if (value == null) return "";
     return String(value);
+  }
+
+  function fillDateLikeField(runtime, value) {
+    const normalized = normalizeDateLikeValue(value, runtime);
+    if (!normalized.ok) {
+      return { filled: false, message: normalized.message };
+    }
+
+    const el = runtime?.el;
+    if (!el) return { filled: false, message: "日期字段不存在" };
+
+    const ok = setDateValueWithEvents(el, normalized.value, runtime);
+    return ok
+      ? { filled: true }
+      : { filled: false, message: "日期写入失败" };
+  }
+
+  function normalizeDateLikeValue(value, runtime) {
+    const raw = String(value || "").trim();
+    if (!raw) {
+      return { ok: false, message: "AI 未给出日期内容" };
+    }
+
+    const mode = runtime?.dateMode || "date";
+    const normalized = raw
+      .replace(/[./]/g, "-")
+      .replace(/年/g, "-")
+      .replace(/月/g, "-")
+      .replace(/日/g, "")
+      .replace(/-+/g, "-")
+      .replace(/^-|-$/g, "")
+      .replace(/\s+/g, " ")
+      .trim();
+
+    if (mode === "month") {
+      const match = normalized.match(/^(\d{4})-(\d{1,2})$/);
+      if (!match) {
+        return { ok: false, message: "日期格式不支持：需要 YYYY-MM" };
+      }
+      const year = match[1];
+      const month = padDatePart(match[2]);
+      if (!isMonthInRange(month)) {
+        return { ok: false, message: "月份超出范围" };
+      }
+      return { ok: true, value: `${year}-${month}` };
+    }
+
+    if (mode === "datetime-local") {
+      const match = normalized.match(
+        /^(\d{4})-(\d{1,2})-(\d{1,2})(?:[ T](\d{1,2}):(\d{1,2}))?$/
+      );
+      if (!match) {
+        return {
+          ok: false,
+          message: "日期时间格式不支持：需要 YYYY-MM-DDTHH:mm",
+        };
+      }
+      const year = match[1];
+      const month = padDatePart(match[2]);
+      const day = padDatePart(match[3]);
+      const hour = padDatePart(match[4] || "00");
+      const minute = padDatePart(match[5] || "00");
+      if (!isMonthInRange(month) || !isDayInRange(day)) {
+        return { ok: false, message: "日期超出范围" };
+      }
+      if (!isHourInRange(hour) || !isMinuteInRange(minute)) {
+        return { ok: false, message: "时间超出范围" };
+      }
+      return { ok: true, value: `${year}-${month}-${day}T${hour}:${minute}` };
+    }
+
+    const match = normalized.match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/);
+    if (!match) {
+      return { ok: false, message: "日期格式不支持：需要 YYYY-MM-DD" };
+    }
+    const year = match[1];
+    const month = padDatePart(match[2]);
+    const day = padDatePart(match[3]);
+    if (!isMonthInRange(month) || !isDayInRange(day)) {
+      return { ok: false, message: "日期超出范围" };
+    }
+    return { ok: true, value: `${year}-${month}-${day}` };
+  }
+
+  function setDateValueWithEvents(el, value, runtime) {
+    if (!el) return false;
+    scrollIntoView(el);
+
+    try {
+      el.focus?.();
+      setNativeValue(el, value);
+      dispatchTextInputEvent(el);
+      el.dispatchEvent(new Event("change", { bubbles: true }));
+      el.blur?.();
+      const actual = String(el.value || "").trim();
+      return isNormalizedDateMatch(actual, value, runtime?.dateMode || "date");
+    } catch (e) {
+      console.warn(EXT_TAG, "日期写入失败", e);
+      return false;
+    }
+  }
+
+  function dispatchTextInputEvent(el) {
+    if (!el || typeof el.dispatchEvent !== "function") return;
+    if (typeof InputEvent === "function") {
+      el.dispatchEvent(new InputEvent("input", { bubbles: true, data: null }));
+      return;
+    }
+    el.dispatchEvent(new Event("input", { bubbles: true }));
+  }
+
+  function isNormalizedDateMatch(actual, expected, mode) {
+    const left = normalizeDateLikeValue(actual, { dateMode: mode });
+    const right = normalizeDateLikeValue(expected, { dateMode: mode });
+    if (!left.ok || !right.ok) return String(actual || "").trim() === String(expected || "").trim();
+    return left.value === right.value;
+  }
+
+  function padDatePart(value) {
+    return String(value || "").padStart(2, "0");
+  }
+
+  function isMonthInRange(value) {
+    const month = Number(value);
+    return Number.isInteger(month) && month >= 1 && month <= 12;
+  }
+
+  function isDayInRange(value) {
+    const day = Number(value);
+    return Number.isInteger(day) && day >= 1 && day <= 31;
+  }
+
+  function isHourInRange(value) {
+    const hour = Number(value);
+    return Number.isInteger(hour) && hour >= 0 && hour <= 23;
+  }
+
+  function isMinuteInRange(value) {
+    const minute = Number(value);
+    return Number.isInteger(minute) && minute >= 0 && minute <= 59;
   }
 
   function detectDateFieldMeta(el, label) {
@@ -1053,6 +1197,15 @@
       type: "updateStats",
       fieldCount,
       filledCount,
+    });
+  }
+
+  if (window.__AI_RESUME_TEST_HOOKS__) {
+    Object.assign(window.__AI_RESUME_TEST_HOOKS__, {
+      detectDateFieldMeta,
+      fillDateLikeField,
+      normalizeDateLikeValue,
+      readRuntimeValue,
     });
   }
 
