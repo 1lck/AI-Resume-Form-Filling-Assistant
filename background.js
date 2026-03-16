@@ -14,7 +14,7 @@ chrome.action.onClicked.addListener((tab) => {
 chrome.runtime.onMessage.addListener((request, _sender, sendResponse) => {
   if (request?.action !== "callAI") return;
 
-  const mode = request.mode || "resume_parse";
+  const mode = request.mode || "resume_import";
   callAI(request.config, request.prompt, mode)
     .then((response) => sendResponse({ success: true, data: response }))
     .catch((error) =>
@@ -37,34 +37,50 @@ async function callAI(config, prompt, mode) {
   }
 
   const systemPrompts = {
-    resume_parse: `你是一个“简历解析助手”。用户会提供中文简历文本，你需要提取其中信息并整理为结构化 JSON。
+    resume_import: `你是一个“标准化简历整理助手”。
+
+用户会提供原始简历文本，以及一个固定 JSON 模板。你的任务是把简历内容提取并填入该模板。
 
 要求：
 1) 只输出 JSON（不要输出其它文本，不要 Markdown 代码块）
-2) 不要编造不存在的信息
-3) 结构要便于自动填写网页表单（可包含：基本信息、联系方式、教育经历、工作经历、项目经历、技能、证书、个人链接、期望、自我介绍等）
-4) 可使用中文或英文键名，不做强制限制，但要清晰、一致`,
+2) 只能使用模板已有字段，不要新增字段
+3) 不要编造不存在的信息；没有信息就保留空字符串
+4) 若遇到列表槽位，按时间从近到远填写
+5) 日期尽量规范化`,
 
-    form_fill: `你是一个“网页表单自动填写助手”。你将收到一个 JSON，包含：
-- fields：页面字段数组（包含 fieldId、kind、label/name/id/placeholder 等以及 options）
-- resume：结构化简历 JSON
+    field_mapping: `你是一个“网页表单字段映射助手”。
+
+你将收到一个 JSON，包含：
+- fields：当前页面识别到的表单字段
+- resumeFields：预先定义好的标准简历字段目录（含 path、label、valuePreview 等）
 
 你的任务：
-1) 为每个 field 选择最合适的填写内容（来自 resume），并给出简短理由
-2) 只输出 JSON（不要输出其它文本，不要 Markdown 代码块）
+1) 为每个页面 field 选择最合适的 resumePath
+2) 只做“字段映射”，不要生成最终填写值
+3) 若字段需要简单转换，可返回 transform
+4) 若没有合适字段，resumePath 返回空字符串
+5) 只输出 JSON（不要输出其它文本，不要 Markdown 代码块）
 
 输出格式（严格遵守）：
 {
-  "fills": [
-    { "fieldId": "xxx", "value": "...", "reason": "..." }
+  "mappings": [
+    {
+      "fieldId": "f_1",
+      "resumePath": "personal.email",
+      "reason": "该字段是邮箱",
+      "transform": { "type": "none" }
+    }
   ]
 }
 
-value 规则：
-- kind = "checkbox_group"：value 为字符串数组（要勾选的选项文本）
-- kind = "radio_group" / "select"：value 为字符串（要选择的选项文本）
-- 其它：value 为字符串
-- 若无法判断，请返回 value = ""，并在 reason 说明原因（不要编造）`,
+允许的 transform：
+- { "type": "none" }
+- { "type": "date_part", "part": "year" | "month" | "day" }
+- { "type": "phone_part", "part": "countryCode" | "nationalNumber" }
+- { "type": "boolean_choice", "trueValue": "...", "falseValue": "..." }
+- { "type": "join", "separator": ", " }
+
+不要返回未列出的 transform。`,
   };
 
   const system = systemPrompts[mode];

@@ -74,8 +74,11 @@ body {
 }
 
 .logo-icon {
-  font-size: 16px;
-  color: var(--primary);
+  width: 24px;
+  height: 24px;
+  display: block;
+  border-radius: 6px;
+  flex-shrink: 0;
 }
 
 .title {
@@ -206,6 +209,10 @@ body {
   gap: 16px;
 }
 
+.stats-grid-3 {
+  grid-template-columns: repeat(3, 1fr);
+}
+
 .stat-card {
   padding: 16px;
   border-radius: var(--radius-lg);
@@ -314,6 +321,7 @@ body {
 .action-row {
   display: flex;
   gap: 12px;
+  flex-wrap: wrap;
 }
 
 .action-row .btn {
@@ -423,6 +431,311 @@ body {
   border-radius: var(--radius-md);
   color: var(--text-secondary);
   font-size: 12px;
+  line-height: 1.6;
+}
+
+.section-block {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.section-header-normal {
+  text-transform: none;
+  letter-spacing: 0;
+  font-size: 13px;
+  color: var(--text-main);
+}
+
+.resume-editor-layout {
+  display: grid;
+  grid-template-columns: minmax(112px, 132px) minmax(0, 1fr);
+  gap: 12px;
+  align-items: start;
+}
+
+.resume-nav {
+  position: sticky;
+  top: 4px;
+  align-self: start;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: none;
+  overflow: visible;
+}
+
+.resume-nav-btn {
+  width: 100%;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--bg-card);
+  padding: 10px 10px 9px;
+  text-align: left;
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font: inherit;
+  color: inherit;
+  transition: all 0.2s ease;
+}
+
+.resume-nav-btn:hover {
+  border-color: var(--text-light);
+  background: var(--secondary);
+}
+
+.resume-nav-btn.has-value {
+  border-color: #d4d4d8;
+}
+
+.resume-nav-btn.is-expanded {
+  border-color: var(--text-main);
+  background: var(--secondary);
+  box-shadow: var(--shadow-sm);
+}
+
+.resume-nav-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-main);
+  line-height: 1.4;
+  word-break: break-word;
+}
+
+.resume-nav-meta {
+  font-size: 11px;
+  color: var(--text-secondary);
+  line-height: 1.4;
+  word-break: break-word;
+}
+
+@media (max-width: 720px) {
+  .resume-editor-layout {
+    grid-template-columns: 92px minmax(0, 1fr);
+  }
+
+  .resume-nav {
+    position: sticky;
+    top: 4px;
+  }
+
+  .resume-nav-btn {
+    padding: 8px 8px 7px;
+  }
+
+  .resume-nav-label {
+    font-size: 11px;
+  }
+
+  .resume-nav-meta {
+    font-size: 10px;
+  }
+
+  .resume-section-head-main {
+    flex-wrap: wrap;
+  }
+
+  .resume-section-actions {
+    width: 100%;
+  }
+
+  .resume-section-action {
+    width: 100%;
+  }
+
+  .resume-section-note {
+    padding-left: 0;
+  }
+}
+
+.resume-form-host {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.resume-section {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--bg-card);
+  overflow: hidden;
+}
+
+.resume-section.is-collapsed .resume-section-body {
+  display: none;
+}
+
+.resume-section-head {
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--border);
+  background: var(--secondary);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.resume-section.is-collapsed .resume-section-head {
+  border-bottom: none;
+}
+
+.resume-section-head-main {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.resume-section-toggle {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  border: none;
+  background: none;
+  padding: 0;
+  text-align: left;
+  cursor: pointer;
+  font: inherit;
+  color: inherit;
+}
+
+.resume-section-toggle-icon {
+  color: var(--text-light);
+  font-size: 13px;
+  line-height: 1.2;
+  transform-origin: center;
+  transition: transform 0.2s ease;
+  margin-top: 2px;
+}
+
+.resume-section:not(.is-collapsed) .resume-section-toggle-icon {
+  transform: rotate(90deg);
+}
+
+.resume-section-heading {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.resume-section-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-main);
+}
+
+.resume-section-summary {
+  font-size: 11px;
+  color: var(--text-secondary);
+  line-height: 1.5;
+}
+
+.resume-section-actions {
+  flex-shrink: 0;
+}
+
+.resume-section-note {
+  padding-left: 23px;
+  font-size: 11px;
+  color: var(--text-secondary);
+  line-height: 1.5;
+}
+
+.resume-section-body {
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.resume-fields-grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 14px;
+}
+
+.resume-field {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.resume-field-label {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-secondary);
+}
+
+.resume-input,
+.resume-select,
+.resume-textarea {
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  font-size: 13px;
+  color: var(--text-main);
+  background: var(--bg-app);
+  transition: all 0.2s;
+}
+
+.resume-textarea {
+  min-height: 96px;
+  resize: vertical;
+  line-height: 1.6;
+}
+
+.resume-input:focus,
+.resume-select:focus,
+.resume-textarea:focus {
+  outline: none;
+  border-color: var(--text-main);
+  box-shadow: 0 0 0 1px var(--text-main);
+}
+
+.resume-slot {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  background: rgba(244, 244, 245, 0.45);
+}
+
+.resume-slot-head {
+  display: flex;
+  flex-direction: column;
+}
+
+.resume-slot-head-main {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.resume-slot-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-main);
+}
+
+.resume-slot-subtitle {
+  margin-top: 4px;
+  font-size: 11px;
+  color: var(--text-light);
+}
+
+.resume-slot-remove {
+  flex-shrink: 0;
+  padding: 0;
 }
 
 /* Tables */
@@ -616,7 +929,26 @@ body {
   transition: all 0.2s;
 }
 
+.form-group textarea,
+.form-group select {
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  font-size: 13px;
+  color: var(--text-main);
+  background: var(--bg-app);
+  transition: all 0.2s;
+}
+
 .form-group input:focus {
+  outline: none;
+  border-color: var(--text-main);
+  box-shadow: 0 0 0 1px var(--text-main);
+}
+
+.form-group textarea:focus,
+.form-group select:focus {
   outline: none;
   border-color: var(--text-main);
   box-shadow: 0 0 0 1px var(--text-main);

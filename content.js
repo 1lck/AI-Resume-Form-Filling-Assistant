@@ -1,15 +1,23 @@
-// Content Script：识别表单字段 -> 调用 AI 映射 -> 自动填写（不提交）
+// Content script: scan fields -> AI mapping to resume paths -> deterministic local fill.
 (function () {
   "use strict";
 
   if (window.__AI_RESUME_AUTOFILL_LOADED__) return;
   window.__AI_RESUME_AUTOFILL_LOADED__ = true;
 
-  const EXT_TAG = "[简历填表助手]";
+  const schema = window.ResumeSchema;
+  if (!schema) {
+    console.error("[简历填表助手] Resume schema not found");
+    return;
+  }
 
-  /** @type {Map<string, any>} */
+  const EXT_TAG = "[简历填表助手]";
+  const MAPPING_CACHE_KEY = "fieldMappingCacheV2";
+
   const fieldRuntimeMap = new Map();
+
   let lastFieldCount = 0;
+  let lastMappedCount = 0;
   let lastFilledCount = 0;
   let isWorking = false;
 
@@ -25,354 +33,323 @@
       sendResponse({
         success: true,
         fieldCount: lastFieldCount,
+        mappedCount: lastMappedCount,
         filledCount: lastFilledCount,
       });
       return;
     }
 
     if (action === "startFill") {
-      handleStartFill(message.config, message.resume, message.memory)
-        .then((res) => sendResponse(res))
-        .catch((err) =>
-          sendResponse({ success: false, message: err?.message || String(err) })
+      handleStartFill(message.config, message.resumeProfile)
+        .then((result) => sendResponse(result))
+        .catch((error) =>
+          sendResponse({ success: false, message: error?.message || String(error) })
         );
       return true;
-    }
-
-    if (action === "refillField") {
-      handleRefill(message.fieldId, message.value)
-        .then((res) => sendResponse(res))
-        .catch((err) =>
-          sendResponse({ success: false, message: err?.message || String(err) })
-        );
-      return true;
-    }
-
-    if (action === "snapshotPageMemory") {
-      handleSnapshotPageMemory()
-        .then((res) => sendResponse(res))
-        .catch((err) =>
-          sendResponse({ success: false, message: err?.message || String(err) })
-        );
-      return true;
-    }
-
-    if (action === "getFieldValue") {
-      sendResponse(handleGetFieldValue(message.fieldId));
-      return;
     }
   });
 
-  async function handleStartFill(config, resumeStructured, memory) {
+  async function handleStartFill(config, resumeProfile) {
     if (isWorking) {
       return { success: false, message: "正在执行中，请稍后再试" };
     }
+
     isWorking = true;
 
     try {
-      if (!resumeStructured || typeof resumeStructured !== "object") {
-        throw new Error("简历数据为空：请先在侧边栏解析并保存简历");
+      if (!resumeProfile || typeof resumeProfile !== "object") {
+        throw new Error("标准简历为空：请先在侧边栏填写或导入标准简历");
       }
 
-      const memoryIndex = buildMemoryIndex(memory);
-
-      sendLog("info", "开始扫描页面表单字段...");
+      sendLog("info", "开始扫描当前页面表单字段...");
       const scan = scanFields();
+
       lastFieldCount = scan.fields.length;
+      lastMappedCount = 0;
+      lastFilledCount = 0;
+
       fieldRuntimeMap.clear();
       for (const runtime of scan.runtime) {
         fieldRuntimeMap.set(runtime.fieldId, runtime);
       }
 
-      sendStats(lastFieldCount, 0);
+      sendStats(lastFieldCount, 0, 0);
+
       if (lastFieldCount === 0) {
         return {
           success: false,
-          message: "未识别到可填写的字段，请确认当前页面包含表单",
+          message: "未识别到可填写字段，请确认当前页面包含表单",
         };
       }
 
-      sendLog(
-        "info",
-        `已识别 ${lastFieldCount} 个字段，正在调用 AI 生成映射...`
-      );
+      const cacheKey = createMappingCacheKey(scan.fields);
+      let mappings = null;
+      let cacheHit = false;
 
-      const payload = {
-        url: location.href,
-        title: document.title,
-        fields: scan.fields,
-        resume: resumeStructured,
-      };
-      const prompt = JSON.stringify(payload);
-      const aiText = await callAI(config, prompt, "form_fill");
-      const mapping = parseJsonFromAiText(aiText);
-      const fills = Array.isArray(mapping?.fills) ? mapping.fills : [];
+      const cachedEntry = await loadMappingCacheEntry(cacheKey);
+      if (cachedEntry?.mappings?.length) {
+        mappings = cachedEntry.mappings;
+        cacheHit = true;
+        sendLog("info", "已命中本地字段映射缓存，跳过模型调用。");
+      } else {
+        sendLog(
+          "info",
+          `已识别 ${lastFieldCount} 个字段，正在调用 AI 建立字段映射...`
+        );
 
-      const fillById = new Map();
-      for (const item of fills) {
-        if (!item || !item.fieldId) continue;
-        fillById.set(String(item.fieldId), item);
+        const promptPayload = buildFieldMappingPayload(scan.fields, resumeProfile);
+        const aiText = await callAI(config, JSON.stringify(promptPayload), "field_mapping");
+        const parsed = parseJsonFromAiText(aiText);
+        mappings = normalizeMappings(parsed?.mappings, scan.fields);
+
+        await saveMappingCacheEntry(cacheKey, {
+          updatedAt: Date.now(),
+          mappings,
+          host: location.host,
+          path: location.pathname,
+        });
+
+        sendLog("success", "字段映射已生成，并已写入本地缓存。");
       }
 
-      sendLog("info", "开始写入字段（不会自动提交）...");
+      const mappingById = new Map();
+      for (const mapping of mappings || []) {
+        if (!mapping?.fieldId) continue;
+        mappingById.set(String(mapping.fieldId), mapping);
+      }
+
+      lastMappedCount = Array.from(mappingById.values()).filter((item) =>
+        Boolean(String(item.resumePath || "").trim())
+      ).length;
+
+      sendStats(lastFieldCount, lastMappedCount, 0);
+      sendLog("info", "开始根据映射结果执行本地填充...");
+
       let filledCount = 0;
-      const results = [];
 
       for (const field of scan.fields) {
-        const fill = fillById.get(field.fieldId);
-        const value = fill?.value;
-        const aiReason = fill?.reason || "";
+        const mapping = mappingById.get(field.fieldId);
+        if (!mapping?.resumePath) continue;
 
         const runtime = fieldRuntimeMap.get(field.fieldId);
-        let r = await fillOne(runtime, value);
-        let finalValue = normalizeValueForPreview(value);
-        let finalReason = aiReason;
+        const rawValue = schema.getValueByPath(resumeProfile, mapping.resumePath);
+        const finalValue = deriveFillValue(rawValue, mapping.transform, runtime);
 
-        if (!r.filled) {
-          const mem = findMemoryForField(field, memoryIndex);
-          if (mem?.value) {
-            const memValue = parseRefillValue(runtime?.kind, mem.value);
-            const r2 = await fillOne(runtime, memValue);
-            if (r2.filled) {
-              r = r2;
-              finalValue = normalizeValueForPreview(mem.value);
-              finalReason = `记忆库补全：${mem.label || mem.key}`;
-            }
-          }
+        if (!hasMeaningfulFillValue(finalValue)) {
+          continue;
         }
 
-        if (r.filled) filledCount += 1;
-
-        results.push({
-          fieldId: field.fieldId,
-          fieldLabel: field.label || field.name || field.placeholder || field.kind,
-          value: finalValue,
-          reason: finalReason,
-          filled: r.filled,
-          message: r.message,
-        });
+        const fillResult = await fillOne(runtime, finalValue);
+        if (fillResult.filled) {
+          filledCount += 1;
+        }
       }
 
       lastFilledCount = filledCount;
-      sendStats(lastFieldCount, lastFilledCount);
+      sendStats(lastFieldCount, lastMappedCount, lastFilledCount);
       sendLog(
         "success",
-        `填充完成：已填充 ${lastFilledCount}/${lastFieldCount} 个字段。请检查后手动提交。`
+        `填充完成：映射 ${lastMappedCount}/${lastFieldCount} 个字段，成功填充 ${lastFilledCount} 个。请检查后手动提交。`
       );
 
       return {
         success: true,
         fieldCount: lastFieldCount,
+        mappedCount: lastMappedCount,
         filledCount: lastFilledCount,
-        items: results,
+        cacheHit,
       };
     } finally {
       isWorking = false;
     }
   }
 
-  async function handleRefill(fieldId, rawValue) {
-    if (!fieldId) return { success: false, message: "缺少 fieldId" };
+  function buildFieldMappingPayload(fields, resumeProfile) {
+    const resumeFields = schema.getCatalogWithValues(resumeProfile).map((field) => ({
+      path: field.path,
+      label: field.label,
+      sectionLabel: field.sectionLabel,
+      itemLabel: field.itemLabel || "",
+      input: field.input,
+      hasValue: field.hasValue,
+      valuePreview: field.valuePreview,
+      options: field.options || [],
+    }));
 
-    const runtime = fieldRuntimeMap.get(String(fieldId));
-    if (!runtime) return { success: false, message: "找不到字段：可能需要重新填充" };
-
-    const value = parseRefillValue(runtime.kind, rawValue);
-    const r = await fillOne(runtime, value);
-    if (!r.filled) return { success: false, message: r.message || "重填失败" };
-    return { success: true };
+    return {
+      url: location.href,
+      title: document.title,
+      allowedTransforms: [
+        { type: "none" },
+        { type: "date_part", part: "year|month|day" },
+        { type: "phone_part", part: "countryCode|nationalNumber" },
+        { type: "boolean_choice", trueValue: "text", falseValue: "text" },
+        { type: "join", separator: ", " },
+      ],
+      fields,
+      resumeFields,
+    };
   }
 
-  async function handleSnapshotPageMemory() {
-    const scan = scanFields();
-    const metaById = new Map(scan.fields.map((f) => [String(f.fieldId), f]));
+  function normalizeMappings(rawMappings, fields) {
+    const validFieldIds = new Set(fields.map((field) => String(field.fieldId)));
+    const normalized = [];
 
-    const items = [];
-    for (const runtime of scan.runtime) {
-      if (!runtime) continue;
-      if (runtime.kind === "file") continue;
+    for (const item of Array.isArray(rawMappings) ? rawMappings : []) {
+      const fieldId = String(item?.fieldId || "").trim();
+      if (!fieldId || !validFieldIds.has(fieldId)) continue;
 
-      const meta = metaById.get(String(runtime.fieldId));
-      const label = normalizeText(
-        meta?.label || meta?.name || meta?.placeholder || meta?.id || ""
-      );
-      if (!label) continue;
-
-      const key = normalizeMemoryKey(label);
-      if (!key) continue;
-
-      const v = readRuntimeValue(runtime);
-      let valueStr = "";
-      if (Array.isArray(v)) {
-        const arr = v.map((x) => String(x).trim()).filter(Boolean);
-        if (arr.length === 0) continue;
-        valueStr = JSON.stringify(arr);
-      } else {
-        valueStr = String(v || "").trim();
-        if (!valueStr) continue;
-      }
-
-      items.push({
-        key,
-        label,
-        value: valueStr,
-        kind: runtime.kind,
+      normalized.push({
+        fieldId,
+        resumePath: String(item?.resumePath || "").trim(),
+        reason: String(item?.reason || "").trim(),
+        transform: normalizeTransform(item?.transform),
       });
     }
 
-    return { success: true, count: items.length, items };
+    return normalized;
   }
 
-  function handleGetFieldValue(fieldId) {
-    if (!fieldId) return { success: false, message: "缺少 fieldId" };
-    const runtime = fieldRuntimeMap.get(String(fieldId));
-    if (!runtime) return { success: false, message: "找不到字段：可能需要重新填充" };
-    return { success: true, value: readRuntimeValue(runtime) };
-  }
-
-  function parseRefillValue(kind, rawValue) {
-    const text = String(rawValue ?? "").trim();
-    if (kind === "checkbox_group") {
-      if (!text) return [];
-      if (text.startsWith("[") && text.endsWith("]")) {
-        try {
-          const parsed = JSON.parse(text);
-          if (Array.isArray(parsed)) return parsed.map((v) => String(v));
-        } catch (_) {
-          // ignore
-        }
-      }
-      return text
-        .split(/[\n,，]/g)
-        .map((s) => s.trim())
-        .filter(Boolean);
-    }
-    return text;
-  }
-
-  function readRuntimeValue(runtime) {
-    const kind = runtime?.kind;
-    if (!runtime) return "";
-
-    if (kind === "checkbox_group") {
-      const selected = [];
-      for (const opt of runtime.options || []) {
-        if (opt?.el?.checked) selected.push(opt.label || opt.value || "");
-      }
-      return selected.filter(Boolean);
+  function normalizeTransform(transform) {
+    if (!transform || typeof transform !== "object") {
+      return { type: "none" };
     }
 
-    if (kind === "radio_group") {
-      for (const opt of runtime.options || []) {
-        if (opt?.el?.checked) return opt.label || opt.value || "";
-      }
+    const type = String(transform.type || "none").trim();
+
+    if (type === "date_part") {
+      const part = ["year", "month", "day"].includes(transform.part)
+        ? transform.part
+        : "year";
+      return { type, part };
+    }
+
+    if (type === "phone_part") {
+      const part =
+        transform.part === "countryCode" ? "countryCode" : "nationalNumber";
+      return { type, part };
+    }
+
+    if (type === "boolean_choice") {
+      return {
+        type,
+        trueValue: String(transform.trueValue ?? "Yes"),
+        falseValue: String(transform.falseValue ?? "No"),
+      };
+    }
+
+    if (type === "join") {
+      return {
+        type,
+        separator: String(transform.separator || ", "),
+      };
+    }
+
+    return { type: "none" };
+  }
+
+  function deriveFillValue(rawValue, transform, runtime) {
+    if (!hasSourceValue(rawValue)) {
       return "";
     }
 
-    if (kind === "select") {
-      const el = runtime.el;
-      if (!el || !el.options) return "";
-      const opt = el.options[el.selectedIndex];
-      return String(opt?.textContent || "").trim();
+    const normalizedTransform = normalizeTransform(transform);
+
+    if (normalizedTransform.type === "date_part") {
+      return getDatePart(rawValue, normalizedTransform.part);
     }
 
-    if (kind === "contenteditable") {
-      return String(runtime.el?.textContent || "").trim();
+    if (normalizedTransform.type === "phone_part") {
+      return getPhonePart(rawValue, normalizedTransform.part);
     }
 
-    return String(runtime.el?.value || "").trim();
+    if (normalizedTransform.type === "boolean_choice") {
+      return isAffirmative(rawValue)
+        ? normalizedTransform.trueValue
+        : normalizedTransform.falseValue;
+    }
+
+    if (normalizedTransform.type === "join") {
+      return joinValue(rawValue, normalizedTransform.separator);
+    }
+
+    if (runtime?.kind === "checkbox_group") {
+      return normalizeCheckboxCandidates(rawValue);
+    }
+
+    return rawValue;
   }
 
-  async function fillOne(runtime, value) {
-    if (!runtime) return { filled: false, message: "字段不存在" };
-
-    const kind = runtime.kind;
-    if (kind === "file") {
-      return { filled: false, message: "文件上传字段无法自动填写" };
+  function hasSourceValue(value) {
+    if (Array.isArray(value)) {
+      return value.some((item) => String(item || "").trim());
     }
 
-    if (kind === "checkbox_group") {
-      const desired = Array.isArray(value)
-        ? value.map((v) => String(v))
-        : String(value || "")
-            .split(/[\n,，]/g)
-            .map((s) => s.trim())
-            .filter(Boolean);
-      if (desired.length === 0) {
-        return { filled: false, message: "AI 未给出勾选项" };
-      }
-
-      const options = runtime.options || [];
-      let any = false;
-      for (const opt of options) {
-        const label = String(opt.label || "").trim();
-        const shouldCheck = desired.some((d) => isFuzzyMatch(label, d));
-        if (!shouldCheck) continue;
-        const ok = await safeCheck(opt.el, true);
-        if (ok) any = true;
-      }
-      return any
-        ? { filled: true }
-        : { filled: false, message: "未找到可匹配的多选项" };
-    }
-
-    if (kind === "radio_group") {
-      const desired = String(value || "").trim();
-      if (!desired) return { filled: false, message: "AI 未给出选择项" };
-
-      const options = runtime.options || [];
-      const best = pickBestOption(options, desired);
-      if (!best) return { filled: false, message: "未找到可匹配的单选项" };
-      const ok = await safeCheck(best.el, true);
-      return ok ? { filled: true } : { filled: false, message: "点击单选项失败" };
-    }
-
-    if (kind === "select") {
-      const desired = String(value || "").trim();
-      if (!desired) return { filled: false, message: "AI 未给出选择值" };
-      const ok = selectByText(runtime.el, desired);
-      return ok ? { filled: true } : { filled: false, message: "未找到可匹配的下拉选项" };
-    }
-
-    if (kind === "contenteditable") {
-      const desired = String(value || "");
-      if (!desired) return { filled: false, message: "AI 未给出填写内容" };
-      const el = runtime.el;
-      scrollIntoView(el);
-      el.focus?.();
-      el.textContent = desired;
-      el.dispatchEvent(new Event("input", { bubbles: true }));
-      el.dispatchEvent(new Event("change", { bubbles: true }));
-      return { filled: true };
-    }
-
-    // text / textarea / input(date/email/tel/...) 统一按 value 写入
-    const desired = String(value || "");
-    if (!desired) return { filled: false, message: "AI 未给出填写内容" };
-    const el = runtime.el;
-    const ok = setValueWithEvents(el, desired);
-    return ok ? { filled: true } : { filled: false, message: "写入失败" };
+    return String(value ?? "").trim().length > 0;
   }
 
-  function normalizeValueForPreview(value) {
-    if (Array.isArray(value)) return JSON.stringify(value);
-    if (value == null) return "";
-    return String(value);
+  function normalizeCheckboxCandidates(value) {
+    if (Array.isArray(value)) {
+      return value.map((item) => String(item || "").trim()).filter(Boolean);
+    }
+
+    const text = String(value || "").trim();
+    if (!text) return [];
+
+    return text
+      .split(/[\n,，;/]/g)
+      .map((item) => item.trim())
+      .filter(Boolean);
   }
 
-  // --- Field Scanning ---
+  function hasMeaningfulFillValue(value) {
+    if (Array.isArray(value)) {
+      return value.some((item) => String(item || "").trim());
+    }
+
+    return String(value ?? "").trim().length > 0;
+  }
+
+  function getDatePart(value, part) {
+    const text = String(value || "").trim();
+    if (!text) return "";
+
+    const match = text.match(/^(\d{4})(?:-(\d{1,2}))?(?:-(\d{1,2}))?/);
+    if (!match) return "";
+
+    if (part === "year") return match[1] || "";
+    if (part === "month") return match[2] ? match[2].padStart(2, "0") : "";
+    return match[3] ? match[3].padStart(2, "0") : "";
+  }
+
+  function getPhonePart(value, part) {
+    const text = String(value || "").trim();
+    if (!text) return "";
+
+    if (part === "countryCode") {
+      const match = text.match(/^\+?\d{1,4}/);
+      return match ? match[0] : "";
+    }
+
+    return text.replace(/^\+?\d{1,4}[\s-]*/, "").trim();
+  }
+
+  function joinValue(value, separator) {
+    if (Array.isArray(value)) {
+      return value.map((item) => String(item || "").trim()).filter(Boolean).join(separator);
+    }
+
+    return String(value || "").trim();
+  }
+
   function scanFields() {
     const root = pickLikelyFormRoot();
     const elements = collectControls(root);
 
-    /** @type {Array<any>} */
     const fields = [];
-    /** @type {Array<any>} */
     const runtime = [];
 
     let idSeq = 0;
-
-    // groups by type+name
     const radioGroups = new Map();
     const checkboxGroups = new Map();
 
@@ -380,6 +357,11 @@
       if (!isFillableElement(el)) continue;
 
       const tag = el.tagName.toLowerCase();
+      const commonMeta = {
+        required: Boolean(el.required || el.getAttribute("aria-required") === "true"),
+        context: getFieldContext(el),
+      };
+
       if (tag === "select") {
         const fieldId = `f_${++idSeq}`;
         const label = getFieldLabel(el);
@@ -396,22 +378,25 @@
           id: el.id || "",
           placeholder: "",
           options,
+          ...commonMeta,
         });
+
         runtime.push({ fieldId, kind: "select", el });
         continue;
       }
 
       if (tag === "textarea") {
         const fieldId = `f_${++idSeq}`;
-        const label = getFieldLabel(el);
         fields.push({
           fieldId,
           kind: "textarea",
-          label,
+          label: getFieldLabel(el),
           name: el.getAttribute("name") || "",
           id: el.id || "",
           placeholder: el.getAttribute("placeholder") || "",
+          ...commonMeta,
         });
+
         runtime.push({ fieldId, kind: "textarea", el });
         continue;
       }
@@ -421,85 +406,81 @@
         el.getAttribute("contenteditable") === "";
       if (isContentEditable) {
         const fieldId = `f_${++idSeq}`;
-        const label = getFieldLabel(el);
         fields.push({
           fieldId,
           kind: "contenteditable",
-          label,
+          label: getFieldLabel(el),
           name: el.getAttribute("name") || "",
           id: el.id || "",
           placeholder: el.getAttribute("placeholder") || "",
+          ...commonMeta,
         });
+
         runtime.push({ fieldId, kind: "contenteditable", el });
         continue;
       }
 
-      if (tag === "input") {
-        const type = String(el.getAttribute("type") || "text").toLowerCase();
-        if (
-          [
-            "hidden",
-            "submit",
-            "button",
-            "reset",
-            "image",
-            "range",
-            "color",
-          ].includes(type)
-        ) {
-          continue;
-        }
+      if (tag !== "input") continue;
 
-        if (type === "file") {
-          const fieldId = `f_${++idSeq}`;
-          const label = getFieldLabel(el);
-          fields.push({
-            fieldId,
-            kind: "file",
-            label,
-            name: el.getAttribute("name") || "",
-            id: el.id || "",
-            placeholder: el.getAttribute("placeholder") || "",
-          });
-          runtime.push({ fieldId, kind: "file", el });
-          continue;
-        }
-
-        if (type === "radio" || type === "checkbox") {
-          const name = el.getAttribute("name") || el.id || "";
-          const key = `${type}:${name || "(no-name)"}`;
-          const groupMap = type === "radio" ? radioGroups : checkboxGroups;
-          if (!groupMap.has(key)) {
-            groupMap.set(key, {
-              type,
-              name,
-              elements: [],
-              label: getGroupLabel(el),
-            });
-          }
-          groupMap.get(key).elements.push(el);
-          continue;
-        }
-
-        // 普通输入框
-        const fieldId = `f_${++idSeq}`;
-        const label = getFieldLabel(el);
-        fields.push({
-          fieldId,
-          kind: "text",
-          inputType: type,
-          label,
-          name: el.getAttribute("name") || "",
-          id: el.id || "",
-          placeholder: el.getAttribute("placeholder") || "",
-          autocomplete: el.getAttribute("autocomplete") || "",
-        });
-        runtime.push({ fieldId, kind: "text", el });
+      const type = String(el.getAttribute("type") || "text").toLowerCase();
+      if (
+        ["hidden", "submit", "button", "reset", "image", "range", "color"].includes(type)
+      ) {
         continue;
       }
+
+      if (type === "file") {
+        const fieldId = `f_${++idSeq}`;
+        fields.push({
+          fieldId,
+          kind: "file",
+          label: getFieldLabel(el),
+          name: el.getAttribute("name") || "",
+          id: el.id || "",
+          placeholder: "",
+          inputType: type,
+          ...commonMeta,
+        });
+
+        runtime.push({ fieldId, kind: "file", inputType: type, el });
+        continue;
+      }
+
+      if (type === "radio" || type === "checkbox") {
+        const name = el.getAttribute("name") || el.id || "";
+        const groupKey = `${type}:${name || "(no-name)"}`;
+        const groupMap = type === "radio" ? radioGroups : checkboxGroups;
+
+        if (!groupMap.has(groupKey)) {
+          groupMap.set(groupKey, {
+            type,
+            name,
+            elements: [],
+            label: getGroupLabel(el),
+            context: getFieldContext(el),
+          });
+        }
+
+        groupMap.get(groupKey).elements.push(el);
+        continue;
+      }
+
+      const fieldId = `f_${++idSeq}`;
+      fields.push({
+        fieldId,
+        kind: "text",
+        inputType: type,
+        label: getFieldLabel(el),
+        name: el.getAttribute("name") || "",
+        id: el.id || "",
+        placeholder: el.getAttribute("placeholder") || "",
+        autocomplete: el.getAttribute("autocomplete") || "",
+        ...commonMeta,
+      });
+
+      runtime.push({ fieldId, kind: "text", inputType: type, el });
     }
 
-    // build groups after collecting
     for (const group of radioGroups.values()) {
       const fieldId = `f_${++idSeq}`;
       const options = group.elements
@@ -507,7 +488,7 @@
           label: getOptionLabel(input),
           value: input.value || "",
         }))
-        .filter((o) => o.label || o.value)
+        .filter((item) => item.label || item.value)
         .slice(0, 80);
 
       fields.push({
@@ -515,7 +496,11 @@
         kind: "radio_group",
         label: group.label,
         name: group.name,
-        options: options.map((o) => o.label || o.value),
+        options: options.map((item) => item.label || item.value),
+        context: group.context,
+        required: group.elements.some(
+          (input) => input.required || input.getAttribute("aria-required") === "true"
+        ),
       });
 
       runtime.push({
@@ -536,7 +521,7 @@
           label: getOptionLabel(input),
           value: input.value || "",
         }))
-        .filter((o) => o.label || o.value)
+        .filter((item) => item.label || item.value)
         .slice(0, 80);
 
       fields.push({
@@ -544,7 +529,11 @@
         kind: "checkbox_group",
         label: group.label,
         name: group.name,
-        options: options.map((o) => o.label || o.value),
+        options: options.map((item) => item.label || item.value),
+        context: group.context,
+        required: group.elements.some(
+          (input) => input.required || input.getAttribute("aria-required") === "true"
+        ),
       });
 
       runtime.push({
@@ -561,77 +550,20 @@
     return { fields, runtime };
   }
 
-  // --- Memory ---
-  function normalizeMemoryKey(text) {
-    return String(text || "")
-      .toLowerCase()
-      .replace(/\s+/g, "")
-      .replace(/[^a-z0-9\u4e00-\u9fff]+/g, "");
-  }
-
-  function buildMemoryIndex(memory) {
-    const exact = new Map();
-    const longKeys = [];
-
-    const obj = memory && typeof memory === "object" ? memory : {};
-    for (const [rawKey, rawEntry] of Object.entries(obj)) {
-      const key = normalizeMemoryKey(rawKey);
-      if (!key) continue;
-
-      const entry =
-        rawEntry && typeof rawEntry === "object"
-          ? rawEntry
-          : { label: rawKey, value: String(rawEntry || "") };
-
-      const value = String(entry.value || "").trim();
-      if (!value) continue;
-
-      const normalized = {
-        key,
-        label: String(entry.label || rawKey || key),
-        value: String(entry.value || ""),
-      };
-
-      exact.set(key, normalized);
-      if (key.length > 3) longKeys.push(normalized);
-    }
-
-    longKeys.sort((a, b) => b.key.length - a.key.length);
-    return { exact, longKeys };
-  }
-
-  function findMemoryForField(field, memoryIndex) {
-    if (!memoryIndex) return null;
-    const fieldKey = normalizeMemoryKey(
-      field?.label || field?.name || field?.placeholder || ""
-    );
-    if (!fieldKey) return null;
-
-    const exact = memoryIndex.exact.get(fieldKey);
-    if (exact) return exact;
-
-    if (fieldKey.length <= 3) return null;
-    for (const item of memoryIndex.longKeys || []) {
-      if (!item?.key) continue;
-      if (fieldKey.includes(item.key) || item.key.includes(fieldKey)) {
-        return item;
-      }
-    }
-    return null;
-  }
-
   function pickLikelyFormRoot() {
-    const forms = Array.from(document.querySelectorAll("form")).filter((f) =>
-      isVisible(f)
+    const forms = Array.from(document.querySelectorAll("form")).filter((form) =>
+      isVisible(form)
     );
     if (forms.length === 0) return document;
 
     const ranked = forms
       .map((form) => ({ form, count: countControls(form) }))
-      .sort((a, b) => b.count - a.count);
+      .sort((left, right) => right.count - left.count);
 
-    const best = ranked[0];
-    if (best && best.count >= 2) return best.form;
+    if (ranked[0]?.count >= 2) {
+      return ranked[0].form;
+    }
+
     return document;
   }
 
@@ -643,9 +575,8 @@
     const scope = root || document;
     const selectors =
       'input, textarea, select, [contenteditable="true"], [contenteditable=""]';
-    return Array.from(scope.querySelectorAll(selectors)).filter((el) =>
-      isVisible(el)
-    );
+
+    return Array.from(scope.querySelectorAll(selectors)).filter((el) => isVisible(el));
   }
 
   function isFillableElement(el) {
@@ -676,7 +607,7 @@
         .split(/\s+/g)
         .map((id) => document.getElementById(id))
         .filter(Boolean)
-        .map((n) => normalizeText(n.textContent || ""));
+        .map((node) => normalizeText(node.textContent || ""));
       const joined = parts.filter(Boolean).join(" / ");
       if (joined) return joined;
     }
@@ -684,52 +615,58 @@
     const id = el.id;
     if (id) {
       const forLabel = document.querySelector(`label[for="${cssEscape(id)}"]`);
-      if (forLabel) {
-        const t = normalizeText(forLabel.textContent || "");
-        if (t) return t;
-      }
+      const labelText = normalizeText(forLabel?.textContent || "");
+      if (labelText) return labelText;
     }
 
     const wrapping = el.closest?.("label");
-    if (wrapping) {
-      const t = normalizeText(wrapping.textContent || "");
-      if (t) return t;
-    }
+    const wrappingText = normalizeText(wrapping?.textContent || "");
+    if (wrappingText) return wrappingText;
 
-    const placeholder = el.getAttribute?.("placeholder");
-    if (placeholder) return normalizeText(placeholder);
+    const placeholder = normalizeText(el.getAttribute?.("placeholder") || "");
+    if (placeholder) return placeholder;
 
-    const name = el.getAttribute?.("name");
-    if (name) return name;
+    const name = normalizeText(el.getAttribute?.("name") || "");
+    return name;
+  }
 
-    return "";
+  function getFieldContext(el) {
+    const container =
+      el.closest?.(
+        'fieldset,[class*="form"],[class*="Form"],[class*="field"],[class*="Field"],[class*="item"],[class*="Item"],[class*="row"],[class*="Row"],section,article,tr,li'
+      ) || el.parentElement;
+
+    const text = normalizeText(container?.textContent || "");
+    if (!text) return "";
+    return text.length > 160 ? `${text.slice(0, 157)}...` : text;
   }
 
   function getGroupLabel(input) {
     const fieldset = input.closest?.("fieldset");
-    const legend = fieldset?.querySelector?.("legend");
-    const legendText = normalizeText(legend?.textContent || "");
+    const legendText = normalizeText(fieldset?.querySelector?.("legend")?.textContent || "");
     if (legendText) return legendText;
 
-    // 常见容器：form-item/field/row 等
     const container =
       input.closest?.(
-        '[class*="form"],[class*="Form"],[class*="field"],[class*="Field"],[class*="item"],[class*="Item"]'
+        '[class*="form"],[class*="Form"],[class*="field"],[class*="Field"],[class*="item"],[class*="Item"],[class*="row"],[class*="Row"]'
       ) || input.parentElement;
+
     const text = normalizeText(container?.textContent || "");
-    return text ? text.slice(0, 50) : "";
+    return text ? text.slice(0, 80) : "";
   }
 
   function getOptionLabel(input) {
     const id = input.id;
     if (id) {
       const forLabel = document.querySelector(`label[for="${cssEscape(id)}"]`);
-      const t = normalizeText(forLabel?.textContent || "");
-      if (t) return t;
+      const labelText = normalizeText(forLabel?.textContent || "");
+      if (labelText) return labelText;
     }
+
     const wrapping = input.closest?.("label");
-    const t = normalizeText(wrapping?.textContent || "");
-    if (t) return t;
+    const wrappingText = normalizeText(wrapping?.textContent || "");
+    if (wrappingText) return wrappingText;
+
     return "";
   }
 
@@ -744,22 +681,111 @@
     if (window.CSS && typeof window.CSS.escape === "function") {
       return window.CSS.escape(value);
     }
+
     return String(value).replace(/["\\]/g, "\\$&");
   }
 
-  // --- Fill helpers ---
+  async function fillOne(runtime, value) {
+    if (!runtime) return { filled: false, message: "字段不存在" };
+
+    if (runtime.kind === "file") {
+      return { filled: false, message: "文件上传字段无法自动填写" };
+    }
+
+    if (runtime.kind === "checkbox_group") {
+      const desired = normalizeCheckboxCandidates(value);
+      if (desired.length === 0) {
+        return { filled: false, message: "没有可勾选项" };
+      }
+
+      let any = false;
+      for (const option of runtime.options || []) {
+        const shouldCheck = matchesAnyCandidate(option.label || option.value, desired);
+        if (!shouldCheck) continue;
+
+        const ok = await safeCheck(option.el, true);
+        if (ok) any = true;
+      }
+
+      return any
+        ? { filled: true }
+        : { filled: false, message: "未找到可匹配的多选项" };
+    }
+
+    if (runtime.kind === "radio_group") {
+      const best = pickBestOption(runtime.options || [], value);
+      if (!best) {
+        return { filled: false, message: "未找到可匹配的单选项" };
+      }
+
+      const ok = await safeCheck(best.el, true);
+      return ok ? { filled: true } : { filled: false, message: "点击单选项失败" };
+    }
+
+    if (runtime.kind === "select") {
+      const ok = selectByText(runtime.el, value);
+      return ok ? { filled: true } : { filled: false, message: "未找到可匹配的下拉选项" };
+    }
+
+    if (runtime.kind === "contenteditable") {
+      const desired = prepareTextValueForRuntime(runtime, value);
+      if (!desired) return { filled: false, message: "没有可填写内容" };
+
+      const el = runtime.el;
+      scrollIntoView(el);
+      el.focus?.();
+      el.textContent = desired;
+      el.dispatchEvent(new Event("input", { bubbles: true }));
+      el.dispatchEvent(new Event("change", { bubbles: true }));
+      return { filled: true };
+    }
+
+    const desired = prepareTextValueForRuntime(runtime, value);
+    if (!desired) return { filled: false, message: "没有可填写内容" };
+
+    const ok = setValueWithEvents(runtime.el, desired);
+    return ok ? { filled: true } : { filled: false, message: "写入失败" };
+  }
+
+  function prepareTextValueForRuntime(runtime, value) {
+    let text = Array.isArray(value)
+      ? value.map((item) => String(item || "").trim()).filter(Boolean).join(", ")
+      : String(value ?? "").trim();
+
+    if (!text) return "";
+
+    if (runtime?.inputType === "date") {
+      if (/^\d{4}-\d{2}$/.test(text)) return `${text}-01`;
+      if (/^\d{4}$/.test(text)) return `${text}-01-01`;
+      if (/^\d{4}-\d{2}-\d{2}$/.test(text)) return text;
+      return "";
+    }
+
+    if (runtime?.inputType === "month") {
+      if (/^\d{4}-\d{2}-\d{2}$/.test(text)) return text.slice(0, 7);
+      if (/^\d{4}-\d{2}$/.test(text)) return text;
+      if (/^\d{4}$/.test(text)) return `${text}-01`;
+      return "";
+    }
+
+    return text;
+  }
+
   function scrollIntoView(el) {
     if (!el) return;
+
     try {
       el.scrollIntoView({ block: "center", behavior: "smooth" });
     } catch (_) {
-      // ignore
+      // Ignore.
     }
   }
 
   function setValueWithEvents(el, value) {
     if (!el) return false;
+
     scrollIntoView(el);
+
     try {
       el.focus?.();
       setNativeValue(el, value);
@@ -767,14 +793,15 @@
       el.dispatchEvent(new Event("change", { bubbles: true }));
       el.blur?.();
       return true;
-    } catch (e) {
-      console.warn(EXT_TAG, "写入失败", e);
+    } catch (error) {
+      console.warn(EXT_TAG, "写入失败", error);
       return false;
     }
   }
 
   function setNativeValue(element, value) {
     const tag = element.tagName?.toLowerCase?.() || "";
+
     if (tag === "input") {
       const setter = Object.getOwnPropertyDescriptor(
         HTMLInputElement.prototype,
@@ -783,6 +810,7 @@
       setter ? setter.call(element, value) : (element.value = value);
       return;
     }
+
     if (tag === "textarea") {
       const setter = Object.getOwnPropertyDescriptor(
         HTMLTextAreaElement.prototype,
@@ -791,31 +819,25 @@
       setter ? setter.call(element, value) : (element.value = value);
       return;
     }
+
     element.value = value;
   }
 
   function selectByText(selectEl, desired) {
-    if (!selectEl || !selectEl.options) return false;
+    if (!selectEl?.options) return false;
+
     scrollIntoView(selectEl);
+    const options = Array.from(selectEl.options)
+      .map((option) => ({
+        el: option,
+        label: String(option.textContent || "").trim(),
+        value: option.value,
+      }))
+      .filter((option) => option.label);
 
-    const options = Array.from(selectEl.options);
-    const wanted = String(desired || "").trim();
-    if (!wanted) return false;
-
-    let best = null;
-    for (const opt of options) {
-      const t = String(opt.textContent || "").trim();
-      if (!t) continue;
-      if (t === wanted) {
-        best = opt;
-        break;
-      }
-      if (!best && isFuzzyMatch(t, wanted)) {
-        best = opt;
-      }
-    }
-
+    const best = pickBestOption(options, desired);
     if (!best) return false;
+
     selectEl.value = best.value;
     selectEl.dispatchEvent(new Event("change", { bubbles: true }));
     selectEl.dispatchEvent(new Event("input", { bubbles: true }));
@@ -824,12 +846,12 @@
 
   async function safeCheck(inputEl, checked) {
     if (!inputEl) return false;
+
     try {
       scrollIntoView(inputEl);
       inputEl.focus?.();
 
       if (typeof inputEl.click === "function") {
-        // 对于大多数框架，click 比直接赋值更可靠
         if (Boolean(inputEl.checked) !== Boolean(checked)) {
           inputEl.click();
         }
@@ -840,6 +862,7 @@
       inputEl.dispatchEvent(new Event("change", { bubbles: true }));
       inputEl.dispatchEvent(new Event("input", { bubbles: true }));
       await sleep(30);
+
       return Boolean(inputEl.checked) === Boolean(checked);
     } catch (_) {
       return false;
@@ -847,55 +870,113 @@
   }
 
   function pickBestOption(options, desired) {
-    const wanted = String(desired || "").trim();
-    if (!wanted) return null;
+    const candidates = Array.isArray(desired)
+      ? desired
+      : [desired].filter((item) => item != null && String(item).trim());
+
     let exact = null;
     let fuzzy = null;
-    for (const opt of options || []) {
-      const label = String(opt.label || "").trim();
+
+    for (const option of options || []) {
+      const label = String(option.label || option.value || "").trim();
       if (!label) continue;
-      if (label === wanted) {
-        exact = opt;
-        break;
+
+      for (const candidate of candidates) {
+        const score = getMatchScore(label, candidate);
+        if (score >= 100) {
+          exact = option;
+          break;
+        }
+
+        if (!fuzzy || score > fuzzy.score) {
+          fuzzy = { option, score };
+        }
       }
-      if (!fuzzy && isFuzzyMatch(label, wanted)) {
-        fuzzy = opt;
-      }
+
+      if (exact) break;
     }
-    return exact || fuzzy;
+
+    return exact || (fuzzy && fuzzy.score >= 60 ? fuzzy.option : null);
   }
 
-  function isFuzzyMatch(a, b) {
-    const x = String(a || "").trim();
-    const y = String(b || "").trim();
-    if (!x || !y) return false;
-    if (x === y) return true;
-    return x.includes(y) || y.includes(x);
+  function matchesAnyCandidate(optionText, candidates) {
+    return candidates.some((candidate) => getMatchScore(optionText, candidate) >= 60);
+  }
+
+  function getMatchScore(optionText, candidateText) {
+    const optionVariants = expandMatchVariants(optionText);
+    const candidateVariants = expandMatchVariants(candidateText);
+
+    for (const optionVariant of optionVariants) {
+      for (const candidateVariant of candidateVariants) {
+        if (!optionVariant || !candidateVariant) continue;
+        if (optionVariant === candidateVariant) return 100;
+        if (optionVariant.includes(candidateVariant) || candidateVariant.includes(optionVariant)) {
+          return 75;
+        }
+      }
+    }
+
+    return 0;
+  }
+
+  function expandMatchVariants(value) {
+    const text = String(value || "").trim();
+    if (!text) return [];
+
+    const normalized = normalizeForMatch(text);
+    const variants = new Set([normalized]);
+
+    for (const group of MATCH_ALIAS_GROUPS) {
+      if (group.values.includes(normalized)) {
+        group.values.forEach((item) => variants.add(item));
+      }
+    }
+
+    return Array.from(variants);
+  }
+
+  function normalizeForMatch(value) {
+    return String(value || "")
+      .toLowerCase()
+      .replace(/\s+/g, "")
+      .replace(/['"`’‘”“]/g, "")
+      .replace(/[()（）[\]【】{}<>]/g, "")
+      .replace(/[.,，/\\\-_:：;+]/g, "");
+  }
+
+  function isAffirmative(value) {
+    const normalized = normalizeForMatch(value);
+    return MATCH_ALIAS_GROUPS.find((group) => group.key === "yes")?.values.includes(
+      normalized
+    );
   }
 
   function sleep(ms) {
-    return new Promise((r) => setTimeout(r, ms));
+    return new Promise((resolve) => setTimeout(resolve, ms));
   }
 
-  // --- AI ---
   function callAI(config, prompt, mode) {
     return new Promise((resolve, reject) => {
       chrome.runtime.sendMessage(
         { action: "callAI", config, prompt, mode },
-        (resp) => {
+        (response) => {
           if (chrome.runtime.lastError) {
             reject(new Error(chrome.runtime.lastError.message));
             return;
           }
-          if (!resp) {
+
+          if (!response) {
             reject(new Error("AI 响应为空"));
             return;
           }
-          if (resp.success) {
-            resolve(resp.data);
+
+          if (response.success) {
+            resolve(response.data);
             return;
           }
-          reject(new Error(resp.error || "AI 调用失败"));
+
+          reject(new Error(response.error || "AI 调用失败"));
         }
       );
     });
@@ -912,8 +993,9 @@
       .replace(/```json\s*/gi, "")
       .replace(/```\s*/g, "")
       .trim();
-    const noFencesParsed = tryParseJson(noFences);
-    if (noFencesParsed.ok) return noFencesParsed.value;
+
+    const noFenceParsed = tryParseJson(noFences);
+    if (noFenceParsed.ok) return noFenceParsed.value;
 
     const extracted = extractLikelyJson(noFences);
     const extractedParsed = tryParseJson(extracted);
@@ -948,21 +1030,222 @@
     if (objCandidate && arrCandidate) {
       return firstObj < firstArr ? objCandidate : arrCandidate;
     }
+
     return objCandidate || arrCandidate || text;
   }
 
-  // --- Popup helpers ---
+  function createMappingCacheKey(fields) {
+    const signature = fields.map((field) => ({
+      kind: field.kind,
+      label: field.label || "",
+      name: field.name || "",
+      id: field.id || "",
+      placeholder: field.placeholder || "",
+      inputType: field.inputType || "",
+      options: field.options || [],
+      context: field.context || "",
+    }));
+
+    const base = `${location.origin}${location.pathname}::${JSON.stringify(signature)}`;
+    return `${location.host}:${hashString(base)}`;
+  }
+
+  function hashString(text) {
+    let hash = 5381;
+    for (let index = 0; index < text.length; index += 1) {
+      hash = (hash * 33) ^ text.charCodeAt(index);
+    }
+    return (hash >>> 0).toString(16);
+  }
+
+  async function loadMappingCacheEntry(cacheKey) {
+    const data = await chrome.storage.local.get([MAPPING_CACHE_KEY]);
+    const cache = data[MAPPING_CACHE_KEY];
+    if (!cache || typeof cache !== "object") return null;
+    return cache[cacheKey] || null;
+  }
+
+  async function saveMappingCacheEntry(cacheKey, entry) {
+    const data = await chrome.storage.local.get([MAPPING_CACHE_KEY]);
+    const cache = data[MAPPING_CACHE_KEY] && typeof data[MAPPING_CACHE_KEY] === "object"
+      ? data[MAPPING_CACHE_KEY]
+      : {};
+
+    cache[cacheKey] = entry;
+
+    const keys = Object.keys(cache).sort((left, right) => {
+      const leftTime = Number(cache[left]?.updatedAt || 0);
+      const rightTime = Number(cache[right]?.updatedAt || 0);
+      return rightTime - leftTime;
+    });
+
+    const nextCache = {};
+    keys.slice(0, 50).forEach((key) => {
+      nextCache[key] = cache[key];
+    });
+
+    await chrome.storage.local.set({ [MAPPING_CACHE_KEY]: nextCache });
+  }
+
   function sendLog(level, text) {
     chrome.runtime.sendMessage({ type: "log", level, text });
   }
 
-  function sendStats(fieldCount, filledCount) {
+  function sendStats(fieldCount, mappedCount, filledCount) {
     chrome.runtime.sendMessage({
       type: "updateStats",
       fieldCount,
+      mappedCount,
       filledCount,
     });
   }
+
+  const MATCH_ALIAS_GROUPS = [
+    {
+      key: "yes",
+      values: [
+        "yes",
+        "y",
+        "true",
+        "1",
+        "是",
+        "有",
+        "愿意",
+        "可以",
+        "present",
+        "current",
+        "currently",
+      ],
+    },
+    {
+      key: "no",
+      values: ["no", "n", "false", "0", "否", "无", "不愿意", "不可以", "不需要"],
+    },
+    {
+      key: "male",
+      values: ["male", "man", "m", "男", "男性"],
+    },
+    {
+      key: "female",
+      values: ["female", "woman", "f", "女", "女性"],
+    },
+    {
+      key: "fulltime",
+      values: ["fulltime", "full-time", "全职"],
+    },
+    {
+      key: "parttime",
+      values: ["parttime", "part-time", "兼职"],
+    },
+    {
+      key: "internship",
+      values: ["internship", "intern", "实习"],
+    },
+    {
+      key: "contract",
+      values: ["contract", "contractor", "合同"],
+    },
+    {
+      key: "freelance",
+      values: ["freelance", "自由职业"],
+    },
+    {
+      key: "bachelor",
+      values: ["bachelor", "undergraduate", "本科", "学士"],
+    },
+    {
+      key: "highschool",
+      values: ["highschool", "high-school", "高中"],
+    },
+    {
+      key: "associate",
+      values: ["associate", "大专"],
+    },
+    {
+      key: "master",
+      values: ["master", "masters", "硕士"],
+    },
+    {
+      key: "mba",
+      values: ["mba"],
+    },
+    {
+      key: "phd",
+      values: ["phd", "doctorate", "博士"],
+    },
+    {
+      key: "single",
+      values: ["single", "未婚"],
+    },
+    {
+      key: "married",
+      values: ["married", "已婚"],
+    },
+    {
+      key: "onsite",
+      values: ["onsite", "on-site", "现场办公", "到岗办公"],
+    },
+    {
+      key: "hybrid",
+      values: ["hybrid", "混合办公"],
+    },
+    {
+      key: "remote",
+      values: ["remote", "远程办公"],
+    },
+    {
+      key: "flexible",
+      values: ["flexible", "灵活"],
+    },
+    {
+      key: "graduated",
+      values: ["graduated", "已毕业"],
+    },
+    {
+      key: "expected",
+      values: ["expected", "预计毕业"],
+    },
+    {
+      key: "enrolled",
+      values: ["enrolled", "在读"],
+    },
+    {
+      key: "dropped",
+      values: ["dropped", "肄业"],
+    },
+    {
+      key: "idcard",
+      values: ["identitycard", "idcard", "身份证"],
+    },
+    {
+      key: "passport",
+      values: ["passport", "护照"],
+    },
+    {
+      key: "permit",
+      values: ["residencepermit", "permit", "居留许可"],
+    },
+    {
+      key: "native",
+      values: ["native", "母语"],
+    },
+    {
+      key: "fluent",
+      values: ["fluent", "流利"],
+    },
+    {
+      key: "professional",
+      values: ["professional", "business", "工作熟练", "专业"],
+    },
+    {
+      key: "intermediate",
+      values: ["intermediate", "中等", "中级"],
+    },
+    {
+      key: "basic",
+      values: ["basic", "基础", "初级"],
+    },
+  ];
 
   console.log(EXT_TAG, "Content script 已加载");
 })();

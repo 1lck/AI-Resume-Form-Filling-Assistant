@@ -1,40 +1,33 @@
-// 侧边栏 UI 逻辑：简历解析（DeepSeek）+ 自动填表（不提交）
+// Side panel logic: standardized resume editor + AI field mapping + deterministic fill.
 
-// --- DOM ---
 const statusDot = document.getElementById("statusDot");
 const statusText = document.getElementById("statusText");
-
-const fieldCountEl = document.getElementById("fieldCount");
-const filledCountEl = document.getElementById("filledCount");
 
 const tabsEl = document.getElementById("tabs");
 const tabFillEl = document.getElementById("tab-fill");
 const tabResumeEl = document.getElementById("tab-resume");
 
+const fieldCountEl = document.getElementById("fieldCount");
+const mappedCountEl = document.getElementById("mappedCount");
+const filledCountEl = document.getElementById("filledCount");
+
 const startFillBtn = document.getElementById("startFillBtn");
 const startFillBtnText = document.getElementById("startFillBtnText");
+const clearMappingCacheBtn = document.getElementById("clearMappingCacheBtn");
 const fillTipEl = document.getElementById("fillTip");
 
-const resultSectionEl = document.getElementById("resultSection");
-const resultTableBodyEl = document.getElementById("resultTableBody");
-const clearResultsBtn = document.getElementById("clearResultsBtn");
-const savePageMemoryBtn = document.getElementById("savePageMemoryBtn");
-
-const resumeTextEl = document.getElementById("resumeText");
-const parseResumeBtn = document.getElementById("parseResumeBtn");
+const resumeNavEl = document.getElementById("resumeNav");
+const resumeFormHost = document.getElementById("resumeFormHost");
 const saveResumeBtn = document.getElementById("saveResumeBtn");
 const reloadResumeBtn = document.getElementById("reloadResumeBtn");
-const resumeTableBodyEl = document.getElementById("resumeTableBody");
+const resumeImportTextEl = document.getElementById("resumeImportText");
+const importResumeBtn = document.getElementById("importResumeBtn");
 const uploadPdfBtn = document.getElementById("uploadPdfBtn");
 const resumePdfFileEl = document.getElementById("resumePdfFile");
-const reloadMemoryBtn = document.getElementById("reloadMemoryBtn");
-const clearMemoryBtn = document.getElementById("clearMemoryBtn");
-const memoryTableBodyEl = document.getElementById("memoryTableBody");
 
 const logContent = document.getElementById("logContent");
 const clearLogBtn = document.getElementById("clearLog");
 
-// Settings Modal Elements
 const settingsModal = document.getElementById("settingsModal");
 const openSettingsBtn = document.getElementById("openSettingsBtn");
 const closeSettingsBtn = document.getElementById("closeSettingsBtn");
@@ -42,7 +35,6 @@ const closeSettingsBackdrop = document.getElementById("closeSettingsBackdrop");
 const modelList = document.getElementById("modelList");
 const addModelBtn = document.getElementById("addModelBtn");
 
-// Edit Model Modal Elements
 const editModelModal = document.getElementById("editModelModal");
 const closeEditBtn = document.getElementById("closeEditBtn");
 const closeEditBackdrop = document.getElementById("closeEditBackdrop");
@@ -55,15 +47,16 @@ const editStatus = document.getElementById("editStatus");
 const saveModelBtn = document.getElementById("saveModelBtn");
 const toggleEditApiKeyBtn = document.getElementById("toggleEditApiKey");
 
-let editingModelId = null;
+const schema = window.ResumeSchema;
+if (!schema) {
+  throw new Error("Resume schema is not available");
+}
 
-// --- State ---
-let isFilling = false;
-let isParsingResume = false;
-let resumeStructured = null;
-let lastFillResults = null;
+const RESUME_PROFILE_KEY = "resumeProfile";
+const RESUME_SCHEMA_VERSION_KEY = "resumeSchemaVersion";
+const RESUME_IMPORT_RAW_TEXT_KEY = "resumeImportRawText";
+const MAPPING_CACHE_KEY = "fieldMappingCacheV2";
 
-// Built-in default model (DeepSeek)
 const BUILTIN_MODEL = {
   id: "builtin-deepseek",
   name: "DeepSeek",
@@ -73,18 +66,25 @@ const BUILTIN_MODEL = {
   builtin: true,
 };
 
+let editingModelId = null;
+let isFilling = false;
+let isImporting = false;
+let isResumeDirty = false;
+let resumeProfile = schema.createEmptyResumeProfile();
+const collapsedResumeSections = new Set();
+
 document.addEventListener("DOMContentLoaded", async () => {
   initTabs();
+  initModalEvents();
+  initResumeEditorEvents();
   await initModels();
-  await loadResumeFromStorage();
-  await renderMemoryTable();
+  await loadResumeProfile();
   updateStartFillAvailability();
 });
 
-// --- Tabs ---
 function initTabs() {
-  tabsEl.addEventListener("click", (e) => {
-    const tabBtn = e.target.closest(".tab");
+  tabsEl.addEventListener("click", (event) => {
+    const tabBtn = event.target.closest(".tab");
     if (!tabBtn) return;
     switchTab(tabBtn.dataset.tab);
   });
@@ -98,7 +98,21 @@ function switchTab(tabKey) {
   tabResumeEl.classList.toggle("active", tabKey === "resume");
 }
 
-// --- Modal Logic ---
+function initModalEvents() {
+  openSettingsBtn.addEventListener("click", openModal);
+  closeSettingsBtn.addEventListener("click", closeModal);
+  closeSettingsBackdrop.addEventListener("click", closeModal);
+  addModelBtn.addEventListener("click", () => openEditModal());
+  closeEditBtn.addEventListener("click", closeEditModal);
+  closeEditBackdrop.addEventListener("click", closeEditModal);
+
+  toggleEditApiKeyBtn.addEventListener("click", () => {
+    const nextType = editApiKeyInput.type === "password" ? "text" : "password";
+    editApiKeyInput.type = nextType;
+    toggleEditApiKeyBtn.style.opacity = nextType === "text" ? "1" : "0.6";
+  });
+}
+
 function openModal() {
   settingsModal.classList.add("open");
   renderModelList();
@@ -115,13 +129,14 @@ function openEditModal(modelId = null) {
   if (modelId) {
     editModalTitle.textContent = "编辑模型";
     loadModelForEdit(modelId);
-  } else {
-    editModalTitle.textContent = "添加模型";
-    editNameInput.value = "DeepSeek";
-    editBaseUrlInput.value = "https://api.deepseek.com/v1";
-    editApiKeyInput.value = "";
-    editModelInput.value = "deepseek-chat";
+    return;
   }
+
+  editModalTitle.textContent = "添加模型";
+  editNameInput.value = "DeepSeek";
+  editBaseUrlInput.value = "https://api.deepseek.com/v1";
+  editApiKeyInput.value = "";
+  editModelInput.value = "deepseek-chat";
 }
 
 function closeEditModal() {
@@ -129,20 +144,6 @@ function closeEditModal() {
   editingModelId = null;
 }
 
-openSettingsBtn.addEventListener("click", openModal);
-closeSettingsBtn.addEventListener("click", closeModal);
-closeSettingsBackdrop.addEventListener("click", closeModal);
-addModelBtn.addEventListener("click", () => openEditModal());
-closeEditBtn.addEventListener("click", closeEditModal);
-closeEditBackdrop.addEventListener("click", closeEditModal);
-
-toggleEditApiKeyBtn.addEventListener("click", () => {
-  const type = editApiKeyInput.type === "password" ? "text" : "password";
-  editApiKeyInput.type = type;
-  toggleEditApiKeyBtn.style.opacity = type === "text" ? "1" : "0.6";
-});
-
-// --- Model Management ---
 async function initModels() {
   const data = await chrome.storage.sync.get([
     "aiModels",
@@ -152,21 +153,24 @@ async function initModels() {
     "model",
   ]);
 
-  // Migrate old config to new structure
   if (!data.aiModels && data.apiKey) {
     const customModel = {
-      id: "custom-" + Date.now(),
+      id: `custom-${Date.now()}`,
       name: "自定义模型",
-      baseUrl: data.baseUrl || "https://api.deepseek.com/v1",
+      baseUrl: data.baseUrl || BUILTIN_MODEL.baseUrl,
       apiKey: data.apiKey,
-      model: data.model || "deepseek-chat",
+      model: data.model || BUILTIN_MODEL.model,
       builtin: false,
     };
+
     await chrome.storage.sync.set({
       aiModels: [customModel],
       activeModelId: customModel.id,
     });
-  } else if (!data.aiModels) {
+    return;
+  }
+
+  if (!data.aiModels) {
     await chrome.storage.sync.set({
       aiModels: [],
       activeModelId: BUILTIN_MODEL.id,
@@ -181,6 +185,7 @@ async function getAllModels() {
     override && typeof override === "object"
       ? { ...BUILTIN_MODEL, ...override, id: BUILTIN_MODEL.id, builtin: true }
       : BUILTIN_MODEL;
+
   return [builtin, ...(data.aiModels || [])];
 }
 
@@ -188,7 +193,7 @@ async function getActiveModel() {
   const data = await chrome.storage.sync.get(["activeModelId"]);
   const models = await getAllModels();
   const activeId = data.activeModelId || BUILTIN_MODEL.id;
-  return models.find((m) => m.id === activeId) || BUILTIN_MODEL;
+  return models.find((model) => model.id === activeId) || BUILTIN_MODEL;
 }
 
 async function renderModelList() {
@@ -199,79 +204,78 @@ async function renderModelList() {
   modelList.innerHTML = models
     .map(
       (model) => `
-      <div class="model-item ${
-        model.id === activeId ? "active" : ""
-      }" data-model-id="${model.id}">
-        <input type="radio" name="activeModel" class="model-radio" value="${
-          model.id
-        }" ${model.id === activeId ? "checked" : ""}>
-        <div class="model-info">
-          <div class="model-name">
-            ${model.name}
-            ${model.builtin ? '<span class="model-badge">内置</span>' : ""}
+        <div class="model-item ${model.id === activeId ? "active" : ""}" data-model-id="${model.id}">
+          <input type="radio" name="activeModel" class="model-radio" value="${model.id}" ${
+            model.id === activeId ? "checked" : ""
+          }>
+          <div class="model-info">
+            <div class="model-name">
+              ${escapeHtml(model.name)}
+              ${model.builtin ? '<span class="model-badge">内置</span>' : ""}
+            </div>
+            <div class="model-meta">${escapeHtml(model.model)}</div>
           </div>
-          <div class="model-meta">${model.model}</div>
+          <div class="model-actions">
+            <button class="icon-btn edit-model-btn" data-model-id="${model.id}">
+              <svg width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" /></svg>
+            </button>
+            ${
+              model.builtin
+                ? ""
+                : `<button class="icon-btn delete-model-btn" data-model-id="${model.id}">
+                     <svg width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
+                   </button>`
+            }
+          </div>
         </div>
-        <div class="model-actions">
-          <button class="icon-btn edit-model-btn" data-model-id="${model.id}">
-            <svg width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" /></svg>
-          </button>
-          ${
-            !model.builtin
-              ? `<button class="icon-btn delete-model-btn" data-model-id="${model.id}">
-                   <svg width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
-                 </button>`
-              : ""
-          }
-        </div>
-      </div>
-    `
+      `
     )
     .join("");
 
   document.querySelectorAll(".model-item").forEach((item) => {
-    item.addEventListener("click", async (e) => {
+    item.addEventListener("click", async (event) => {
       if (
-        e.target.closest(".edit-model-btn") ||
-        e.target.closest(".delete-model-btn")
+        event.target.closest(".edit-model-btn") ||
+        event.target.closest(".delete-model-btn")
       ) {
         return;
       }
 
       const modelId = item.dataset.modelId;
-      const model = models.find((m) => m.id === modelId);
-
+      const model = models.find((entry) => entry.id === modelId);
       await chrome.storage.sync.set({ activeModelId: modelId });
-      addLog("success", `已使用 ${model.name} 模型`);
+      addLog("success", `已切换模型：${model?.name || modelId}`);
       closeModal();
     });
   });
 
   document.querySelectorAll(".model-radio").forEach((radio) => {
-    radio.addEventListener("change", async (e) => {
-      e.stopPropagation();
-      await chrome.storage.sync.set({ activeModelId: e.target.value });
+    radio.addEventListener("change", async (event) => {
+      event.stopPropagation();
+      await chrome.storage.sync.set({ activeModelId: event.target.value });
       renderModelList();
     });
   });
 
-  document.querySelectorAll(".edit-model-btn").forEach((btn) => {
-    btn.addEventListener("click", (e) => {
-      e.stopPropagation();
-      openEditModal(e.currentTarget.dataset.modelId);
+  document.querySelectorAll(".edit-model-btn").forEach((button) => {
+    button.addEventListener("click", (event) => {
+      event.stopPropagation();
+      openEditModal(event.currentTarget.dataset.modelId);
     });
   });
 
-  document.querySelectorAll(".delete-model-btn").forEach((btn) => {
-    btn.addEventListener("click", async (e) => {
-      e.stopPropagation();
-      const modelId = e.currentTarget.dataset.modelId;
+  document.querySelectorAll(".delete-model-btn").forEach((button) => {
+    button.addEventListener("click", async (event) => {
+      event.stopPropagation();
+      const modelId = event.currentTarget.dataset.modelId;
       if (!confirm("确定要删除这个模型吗？")) return;
 
       const data = await chrome.storage.sync.get(["aiModels", "activeModelId"]);
-      const models = (data.aiModels || []).filter((m) => m.id !== modelId);
+      const modelsWithoutCurrent = (data.aiModels || []).filter(
+        (model) => model.id !== modelId
+      );
 
-      const updates = { aiModels: models };
+      const updates = { aiModels: modelsWithoutCurrent };
       if (data.activeModelId === modelId) {
         updates.activeModelId = BUILTIN_MODEL.id;
       }
@@ -284,7 +288,7 @@ async function renderModelList() {
 
 async function loadModelForEdit(modelId) {
   const models = await getAllModels();
-  const model = models.find((m) => m.id === modelId);
+  const model = models.find((item) => item.id === modelId);
   if (!model) return;
 
   editNameInput.value = model.name;
@@ -307,41 +311,44 @@ saveModelBtn.addEventListener("click", async () => {
   saveModelBtn.disabled = true;
   saveModelBtn.textContent = "保存中...";
 
-  const data = await chrome.storage.sync.get(["aiModels"]);
-  const models = data.aiModels || [];
+  try {
+    const data = await chrome.storage.sync.get(["aiModels"]);
+    const models = data.aiModels || [];
 
-  if (editingModelId === BUILTIN_MODEL.id) {
-    await chrome.storage.sync.set({
-      builtinModelOverride: { name, baseUrl, apiKey, model },
-      activeModelId: BUILTIN_MODEL.id,
-    });
-  } else if (editingModelId) {
-    const index = models.findIndex((m) => m.id === editingModelId);
-    if (index !== -1) {
-      models[index] = { ...models[index], name, baseUrl, apiKey, model };
+    if (editingModelId === BUILTIN_MODEL.id) {
+      await chrome.storage.sync.set({
+        builtinModelOverride: { name, baseUrl, apiKey, model },
+        activeModelId: BUILTIN_MODEL.id,
+      });
+    } else if (editingModelId) {
+      const index = models.findIndex((item) => item.id === editingModelId);
+      if (index !== -1) {
+        models[index] = { ...models[index], name, baseUrl, apiKey, model };
+      }
+      await chrome.storage.sync.set({ aiModels: models });
+    } else {
+      models.push({
+        id: `custom-${Date.now()}`,
+        name,
+        baseUrl,
+        apiKey,
+        model,
+        builtin: false,
+      });
+      await chrome.storage.sync.set({ aiModels: models });
     }
-    await chrome.storage.sync.set({ aiModels: models });
-  } else {
-    models.push({
-      id: "custom-" + Date.now(),
-      name,
-      baseUrl,
-      apiKey,
-      model,
-      builtin: false,
-    });
-    await chrome.storage.sync.set({ aiModels: models });
-  }
 
-  setTimeout(() => {
-    saveModelBtn.disabled = false;
-    saveModelBtn.textContent = "保存";
     showEditStatus("success", "保存成功");
     setTimeout(() => {
       closeEditModal();
       renderModelList();
-    }, 500);
-  }, 300);
+    }, 300);
+  } finally {
+    setTimeout(() => {
+      saveModelBtn.disabled = false;
+      saveModelBtn.textContent = "保存";
+    }, 300);
+  }
 });
 
 function showEditStatus(type, message) {
@@ -357,59 +364,474 @@ function isModelConfigured(model) {
   return Boolean(model?.baseUrl && model?.apiKey && model?.model);
 }
 
-// --- Resume ---
-async function loadResumeFromStorage() {
-  const data = await chrome.storage.sync.get(["resumeRawText", "resumeStructured"]);
-  resumeTextEl.value = data.resumeRawText || "";
-  resumeStructured = data.resumeStructured || null;
-  renderResumeTable(resumeStructured);
-}
-
-reloadResumeBtn.addEventListener("click", async () => {
-  await loadResumeFromStorage();
-  saveResumeBtn.disabled = true;
-  addLog("info", "已从存储重新加载简历解析结果");
-  updateStartFillAvailability();
-});
-
-reloadMemoryBtn.addEventListener("click", async () => {
-  await renderMemoryTable();
-  addLog("info", "已刷新记忆库");
-});
-
-clearMemoryBtn.addEventListener("click", async () => {
-  if (!confirm("确定要清空记忆库吗？这会影响后续自动补全。")) return;
-  await chrome.storage.sync.set({ fieldMemory: {} });
-  await renderMemoryTable();
-  addLog("success", "记忆库已清空");
-});
-
-parseResumeBtn.addEventListener("click", async () => {
-  const raw = resumeTextEl.value.trim();
-  await parseAndStoreResume(raw);
-});
-
-saveResumeBtn.addEventListener("click", async () => {
-  if (!resumeStructured) return;
-
-  const cloned = deepClone(resumeStructured);
-  const inputs = resumeTableBodyEl.querySelectorAll("[data-pointer]");
-  for (const input of inputs) {
-    const pointer = input.dataset.pointer;
-    const rawValue = input.value ?? "";
-    setByJsonPointer(cloned, pointer, rawValue);
-  }
-
-  resumeStructured = cloned;
-  await chrome.storage.sync.set({
-    resumeRawText: resumeTextEl.value.trim(),
-    resumeStructured: cloned,
-    resumeUpdatedAt: Date.now(),
+function initResumeEditorEvents() {
+  resumeNavEl.addEventListener("click", (event) => {
+    const navBtn = event.target.closest("[data-resume-nav]");
+    if (!navBtn) return;
+    openResumeSection(navBtn.dataset.resumeNav, { scrollIntoView: true });
   });
 
+  resumeFormHost.addEventListener("click", (event) => {
+    const toggleBtn = event.target.closest("[data-section-toggle]");
+    if (toggleBtn) {
+      toggleResumeSection(toggleBtn.dataset.sectionToggle);
+      return;
+    }
+
+    const addBtn = event.target.closest("[data-section-add]");
+    if (addBtn) {
+      addResumeListItem(addBtn.dataset.sectionAdd);
+      return;
+    }
+
+    const removeBtn = event.target.closest("[data-section-remove]");
+    if (removeBtn) {
+      removeResumeListItem(
+        removeBtn.dataset.sectionRemove,
+        Number(removeBtn.dataset.itemIndex)
+      );
+    }
+  });
+}
+
+function resetCollapsedResumeSections() {
+  collapsedResumeSections.clear();
+  schema.sections.forEach((section) => collapsedResumeSections.add(section.key));
+}
+
+async function loadResumeProfile() {
+  const data = await chrome.storage.sync.get([
+    RESUME_PROFILE_KEY,
+    RESUME_IMPORT_RAW_TEXT_KEY,
+    "resumeStructured",
+    "resumeRawText",
+  ]);
+
+  const sourceProfile =
+    data[RESUME_PROFILE_KEY] && typeof data[RESUME_PROFILE_KEY] === "object"
+      ? data[RESUME_PROFILE_KEY]
+      : data.resumeStructured || {};
+
+  resumeProfile = schema.normalizeResumeProfile(sourceProfile);
+  resumeImportTextEl.value = data[RESUME_IMPORT_RAW_TEXT_KEY] || data.resumeRawText || "";
+  resetCollapsedResumeSections();
+  renderResumeEditor(resumeProfile);
+  isResumeDirty = false;
+  saveResumeBtn.disabled = true;
+}
+
+function renderResumeEditor(profile) {
+  const sectionStats = buildResumeSectionStats(profile);
+
+  renderResumeNav(sectionStats);
+  resumeFormHost.innerHTML = "";
+
+  for (const section of schema.sections) {
+    const itemCount =
+      section.type === "list" && Array.isArray(profile[section.key])
+        ? profile[section.key].length
+        : 0;
+    const isCollapsed = collapsedResumeSections.has(section.key);
+    const stats = sectionStats.get(section.key) || {
+      totalFields: 0,
+      filledFields: 0,
+      itemCount,
+      filledItems: 0,
+    };
+    const sectionEl = document.createElement("section");
+    sectionEl.className = `resume-section${isCollapsed ? " is-collapsed" : ""}`;
+    sectionEl.dataset.sectionKey = section.key;
+    sectionEl.id = `resume-section-${section.key}`;
+
+    const headEl = document.createElement("div");
+    headEl.className = "resume-section-head";
+    headEl.innerHTML = `
+      <div class="resume-section-head-main">
+        <button
+          type="button"
+          class="resume-section-toggle"
+          data-section-toggle="${escapeHtml(section.key)}"
+          aria-expanded="${isCollapsed ? "false" : "true"}"
+        >
+          <span class="resume-section-toggle-icon">▸</span>
+          <span class="resume-section-heading">
+            <span class="resume-section-title">${escapeHtml(section.label)}</span>
+            <span class="resume-section-summary">${escapeHtml(
+              createResumeSectionSummary(section, stats)
+            )}</span>
+          </span>
+        </button>
+        ${
+          section.type === "list"
+            ? `
+              <div class="resume-section-actions">
+                <button
+                  type="button"
+                  class="btn btn-outline btn-sm resume-section-action"
+                  data-section-add="${escapeHtml(section.key)}"
+                  ${itemCount >= section.slots ? "disabled" : ""}
+                >
+                  新增一条
+                </button>
+              </div>
+            `
+            : ""
+        }
+      </div>
+      ${
+        section.note
+          ? `<div class="resume-section-note">${escapeHtml(section.note)}</div>`
+          : ""
+      }
+    `;
+
+    const bodyEl = document.createElement("div");
+    bodyEl.className = "resume-section-body";
+
+    if (section.type === "group") {
+      bodyEl.appendChild(renderFieldGrid(section.fields, profile, section.key));
+    } else {
+      const items = Array.isArray(profile[section.key]) ? profile[section.key] : [];
+      for (let slotIndex = 0; slotIndex < items.length; slotIndex += 1) {
+        const slotEl = document.createElement("div");
+        slotEl.className = "resume-slot";
+
+        const slotHead = document.createElement("div");
+        slotHead.className = "resume-slot-head";
+        slotHead.innerHTML = `
+          <div class="resume-slot-head-main">
+            <div>
+              <div class="resume-slot-title">${escapeHtml(
+                `${section.itemLabel} ${slotIndex + 1}`
+              )}</div>
+              <div class="resume-slot-subtitle">${escapeHtml(
+                `映射路径：${section.key}.${slotIndex}.*`
+              )}</div>
+            </div>
+            ${
+              items.length > Math.max(1, Number(section.initialItems) || 1)
+                ? `
+                  <button
+                    type="button"
+                    class="btn-text resume-slot-remove"
+                    data-section-remove="${escapeHtml(section.key)}"
+                    data-item-index="${slotIndex}"
+                  >
+                    删除
+                  </button>
+                `
+                : ""
+            }
+          </div>
+        `;
+
+        slotEl.appendChild(slotHead);
+        slotEl.appendChild(
+          renderFieldGrid(section.fields, profile, `${section.key}.${slotIndex}`)
+        );
+        bodyEl.appendChild(slotEl);
+      }
+    }
+
+    sectionEl.appendChild(headEl);
+    sectionEl.appendChild(bodyEl);
+    resumeFormHost.appendChild(sectionEl);
+  }
+}
+
+function renderResumeNav(sectionStats) {
+  resumeNavEl.innerHTML = "";
+
+  for (const section of schema.sections) {
+    const stats = sectionStats.get(section.key) || {
+      totalFields: 0,
+      filledFields: 0,
+      itemCount: 0,
+      filledItems: 0,
+    };
+    const hasValue =
+      section.type === "list" ? stats.filledItems > 0 : stats.filledFields > 0;
+    const isCollapsed = collapsedResumeSections.has(section.key);
+    const buttonEl = document.createElement("button");
+    buttonEl.type = "button";
+    buttonEl.className = `resume-nav-btn${hasValue ? " has-value" : ""}${
+      isCollapsed ? "" : " is-expanded"
+    }`;
+    buttonEl.dataset.resumeNav = section.key;
+    buttonEl.innerHTML = `
+      <span class="resume-nav-label">${escapeHtml(section.label)}</span>
+      <span class="resume-nav-meta">${escapeHtml(
+        createResumeNavSummary(section, stats)
+      )}</span>
+    `;
+    resumeNavEl.appendChild(buttonEl);
+  }
+}
+
+function renderFieldGrid(fields, profile, prefix) {
+  const gridEl = document.createElement("div");
+  gridEl.className = "resume-fields-grid";
+
+  for (const field of fields) {
+    const path = `${prefix}.${field.key}`;
+    const fieldEl = document.createElement("div");
+    fieldEl.className = "resume-field";
+
+    const labelEl = document.createElement("label");
+    labelEl.className = "resume-field-label";
+    labelEl.textContent = field.label;
+
+    const control = createFieldControl(field, schema.getValueByPath(profile, path), path);
+    fieldEl.appendChild(labelEl);
+    fieldEl.appendChild(control);
+    gridEl.appendChild(fieldEl);
+  }
+
+  return gridEl;
+}
+
+function createFieldControl(field, value, path) {
+  let control;
+
+  if (field.input === "textarea") {
+    control = document.createElement("textarea");
+    control.className = "resume-textarea";
+  } else if (field.input === "select") {
+    control = document.createElement("select");
+    control.className = "resume-select";
+    for (const optionValue of field.options || []) {
+      const optionEl = document.createElement("option");
+      optionEl.value = optionValue;
+      optionEl.textContent = optionValue || "请选择";
+      control.appendChild(optionEl);
+    }
+  } else {
+    control = document.createElement("input");
+    control.className = "resume-input";
+    control.type = field.input || "text";
+  }
+
+  control.dataset.resumePath = path;
+  control.value = value == null ? "" : String(value);
+  if (field.placeholder) {
+    control.placeholder = field.placeholder;
+  }
+
+  control.addEventListener("input", markResumeDirty);
+  control.addEventListener("change", markResumeDirty);
+  return control;
+}
+
+function markResumeDirty() {
+  isResumeDirty = true;
+  saveResumeBtn.disabled = false;
+}
+
+function hasMeaningfulResumeValue(value) {
+  if (value == null) return false;
+  if (typeof value === "string") return value.trim().length > 0;
+  if (typeof value === "number") return true;
+  if (typeof value === "boolean") return true;
+  if (Array.isArray(value)) return value.some((item) => hasMeaningfulResumeValue(item));
+  if (typeof value === "object") {
+    return Object.values(value).some((item) => hasMeaningfulResumeValue(item));
+  }
+  return false;
+}
+
+function buildResumeSectionStats(profile) {
+  const statsBySection = new Map();
+  const catalog = schema.getCatalogWithValues(profile);
+
+  for (const section of schema.sections) {
+    const items = Array.isArray(profile[section.key]) ? profile[section.key] : [];
+    statsBySection.set(section.key, {
+      totalFields: 0,
+      filledFields: 0,
+      itemCount: items.length,
+      filledItems: items.filter((item) => hasMeaningfulResumeValue(item)).length,
+    });
+  }
+
+  for (const field of catalog) {
+    const stats = statsBySection.get(field.sectionKey);
+    if (!stats) continue;
+    stats.totalFields += 1;
+    if (field.hasValue) {
+      stats.filledFields += 1;
+    }
+  }
+
+  return statsBySection;
+}
+
+function createResumeSectionSummary(section, stats) {
+  if (section.type === "list") {
+    return `已添加 ${stats.itemCount} / ${section.slots} 条，已填写 ${stats.filledItems} 条`;
+  }
+
+  return `已填写 ${stats.filledFields} / ${stats.totalFields} 项`;
+}
+
+function createResumeNavSummary(section, stats) {
+  if (section.type === "list") {
+    return `${stats.filledItems}/${stats.itemCount} 条`;
+  }
+
+  return `${stats.filledFields}/${stats.totalFields} 项`;
+}
+
+function collectResumeProfileFromForm() {
+  const nextProfile = schema.createEmptyResumeProfile();
+  const controls = resumeFormHost.querySelectorAll("[data-resume-path]");
+
+  controls.forEach((control) => {
+    schema.setValueByPath(
+      nextProfile,
+      control.dataset.resumePath,
+      String(control.value || "").trim()
+    );
+  });
+
+  return schema.normalizeResumeProfile(nextProfile);
+}
+
+function syncResumeProfileFromForm() {
+  resumeProfile = collectResumeProfileFromForm();
+  return resumeProfile;
+}
+
+function applyResumeSectionState(sectionKey) {
+  const sectionEl = resumeFormHost.querySelector(`[data-section-key="${sectionKey}"]`);
+  const navBtn = resumeNavEl.querySelector(`[data-resume-nav="${sectionKey}"]`);
+  const isCollapsed = collapsedResumeSections.has(sectionKey);
+
+  if (sectionEl) {
+    sectionEl.classList.toggle("is-collapsed", isCollapsed);
+    const toggleBtn = sectionEl.querySelector("[data-section-toggle]");
+    if (toggleBtn) {
+      toggleBtn.setAttribute("aria-expanded", isCollapsed ? "false" : "true");
+    }
+  }
+
+  if (navBtn) {
+    navBtn.classList.toggle("is-expanded", !isCollapsed);
+  }
+}
+
+function toggleResumeSection(sectionKey) {
+  if (!sectionKey) return;
+
+  if (collapsedResumeSections.has(sectionKey)) {
+    collapsedResumeSections.delete(sectionKey);
+  } else {
+    collapsedResumeSections.add(sectionKey);
+  }
+
+  applyResumeSectionState(sectionKey);
+}
+
+function openResumeSection(sectionKey, { scrollIntoView = false } = {}) {
+  if (!sectionKey) return;
+
+  collapsedResumeSections.delete(sectionKey);
+  applyResumeSectionState(sectionKey);
+
+  if (scrollIntoView) {
+    const sectionEl = document.getElementById(`resume-section-${sectionKey}`);
+    sectionEl?.scrollIntoView({ behavior: "smooth", block: "start" });
+  }
+}
+
+function focusResumeField(path) {
+  const control = resumeFormHost.querySelector(`[data-resume-path="${path}"]`);
+  if (!control) return;
+
+  control.focus();
+  if (typeof control.select === "function") {
+    control.select();
+  }
+}
+
+function addResumeListItem(sectionKey) {
+  const section = schema.getSectionDefinition(sectionKey);
+  if (!section || section.type !== "list") return;
+
+  const nextProfile = syncResumeProfileFromForm();
+  const items = Array.isArray(nextProfile[sectionKey]) ? [...nextProfile[sectionKey]] : [];
+  if (items.length >= section.slots) return;
+
+  items.push(schema.createEmptyListItem(sectionKey));
+  resumeProfile = schema.normalizeResumeProfile({
+    ...nextProfile,
+    [sectionKey]: items,
+  });
+
+  collapsedResumeSections.delete(sectionKey);
+  renderResumeEditor(resumeProfile);
+  markResumeDirty();
+
+  const nextPath = `${sectionKey}.${items.length - 1}.${section.fields[0]?.key || ""}`;
+  openResumeSection(sectionKey, { scrollIntoView: true });
+  if (section.fields[0]?.key) {
+    focusResumeField(nextPath);
+  }
+}
+
+function removeResumeListItem(sectionKey, itemIndex) {
+  const section = schema.getSectionDefinition(sectionKey);
+  if (!section || section.type !== "list") return;
+
+  const minItems = Math.max(1, Number(section.initialItems) || 1);
+  const nextProfile = syncResumeProfileFromForm();
+  const items = Array.isArray(nextProfile[sectionKey]) ? [...nextProfile[sectionKey]] : [];
+
+  if (items.length <= minItems) return;
+  if (!Number.isInteger(itemIndex) || itemIndex < 0 || itemIndex >= items.length) return;
+
+  items.splice(itemIndex, 1);
+  resumeProfile = schema.normalizeResumeProfile({
+    ...nextProfile,
+    [sectionKey]: items,
+  });
+
+  collapsedResumeSections.delete(sectionKey);
+  renderResumeEditor(resumeProfile);
+  markResumeDirty();
+  openResumeSection(sectionKey);
+}
+
+async function persistResumeProfile({ silent = false } = {}) {
+  const nextProfile = collectResumeProfileFromForm();
+
+  resumeProfile = nextProfile;
+  await chrome.storage.sync.set({
+    [RESUME_PROFILE_KEY]: nextProfile,
+    [RESUME_SCHEMA_VERSION_KEY]: schema.version,
+    [RESUME_IMPORT_RAW_TEXT_KEY]: resumeImportTextEl.value.trim(),
+  });
+
+  isResumeDirty = false;
   saveResumeBtn.disabled = true;
   updateStartFillAvailability();
-  addLog("success", "简历已保存");
+
+  if (!silent) {
+    addLog("success", "标准简历已保存");
+  }
+}
+
+saveResumeBtn.addEventListener("click", async () => {
+  await persistResumeProfile();
+});
+
+reloadResumeBtn.addEventListener("click", async () => {
+  await loadResumeProfile();
+  updateStartFillAvailability();
+  addLog("info", "已从存储重新加载标准简历");
+});
+
+importResumeBtn.addEventListener("click", async () => {
+  await importResumeToSchema(resumeImportTextEl.value.trim());
 });
 
 uploadPdfBtn.addEventListener("click", () => {
@@ -427,8 +849,8 @@ resumePdfFileEl.addEventListener("change", async () => {
   }
 
   uploadPdfBtn.disabled = true;
-  parseResumeBtn.disabled = true;
-  updateStatus("running", "解析PDF中...");
+  importResumeBtn.disabled = true;
+  updateStatus("running", "解析 PDF 中...");
   addLog("info", `正在提取 PDF 文本：${file.name}`);
 
   try {
@@ -437,75 +859,111 @@ resumePdfFileEl.addEventListener("change", async () => {
       throw new Error("未提取到文本：如果是扫描版 PDF，请先转为可复制文字或使用 OCR");
     }
 
-    resumeTextEl.value = text;
-    await chrome.storage.sync.set({ resumeRawText: text, resumeUpdatedAt: Date.now() });
+    resumeImportTextEl.value = text;
+    await chrome.storage.sync.set({ [RESUME_IMPORT_RAW_TEXT_KEY]: text });
 
-    addLog("success", "PDF 文本提取完成，开始调用 AI 解析...");
-    await parseAndStoreResume(text);
-  } catch (e) {
-    addLog("error", `PDF 解析失败：${e.message}`);
-    updateStatus("error", "PDF失败");
+    addLog("success", "PDF 文本提取完成，开始导入到标准简历...");
+    await importResumeToSchema(text);
+  } catch (error) {
+    addLog("error", `PDF 导入失败：${error.message}`);
+    updateStatus("error", "PDF 失败");
   } finally {
     uploadPdfBtn.disabled = false;
-    parseResumeBtn.disabled = false;
+    importResumeBtn.disabled = false;
   }
 });
 
-async function parseAndStoreResume(raw) {
-  if (isParsingResume) return;
-  const text = String(raw || "").trim();
+async function importResumeToSchema(rawText) {
+  if (isImporting) return;
+
+  const text = String(rawText || "").trim();
   if (!text) {
-    addLog("warning", "请先粘贴简历文本（或上传 PDF）");
+    addLog("warning", "请先粘贴原始简历文本，或上传 PDF");
     return;
   }
 
   const activeModel = await getActiveModel();
   if (!isModelConfigured(activeModel)) {
-    addLog("error", "请先在设置中配置 DeepSeek/API Key");
+    addLog("error", "请先在设置中配置模型");
     openModal();
     return;
   }
 
-  isParsingResume = true;
-  parseResumeBtn.disabled = true;
-  parseResumeBtn.textContent = "解析中...";
-  updateStatus("running", "解析中...");
+  isImporting = true;
+  importResumeBtn.disabled = true;
+  uploadPdfBtn.disabled = true;
+  importResumeBtn.textContent = "导入中...";
+  updateStatus("running", "导入中...");
 
   try {
     const config = pickConfig(activeModel);
-    const prompt = buildResumeParsePrompt(limitTextForPrompt(text));
-    const aiText = await callAI(config, prompt, "resume_parse");
+    const prompt = buildResumeImportPrompt(limitTextForPrompt(text));
+    const aiText = await callAI(config, prompt, "resume_import");
     const parsed = parseJsonFromAiText(aiText);
+    const normalized = schema.normalizeResumeProfile(parsed);
 
-    resumeStructured = parsed;
+    resumeProfile = normalized;
     await chrome.storage.sync.set({
-      resumeRawText: text,
-      resumeStructured: parsed,
-      resumeUpdatedAt: Date.now(),
+      [RESUME_PROFILE_KEY]: normalized,
+      [RESUME_SCHEMA_VERSION_KEY]: schema.version,
+      [RESUME_IMPORT_RAW_TEXT_KEY]: text,
     });
 
-    renderResumeTable(parsed);
+    resetCollapsedResumeSections();
+    renderResumeEditor(normalized);
+    isResumeDirty = false;
     saveResumeBtn.disabled = true;
     updateStartFillAvailability();
 
-    addLog("success", "简历解析完成，可在表格中直接修改后点击“保存修改”");
+    addLog("success", "导入完成：已预填到标准简历，请检查后使用");
     updateStatus("ready", "就绪");
-  } catch (e) {
-    addLog("error", `简历解析失败：${e.message}`);
-    updateStatus("error", "解析失败");
+  } catch (error) {
+    addLog("error", `导入失败：${error.message}`);
+    updateStatus("error", "导入失败");
   } finally {
-    parseResumeBtn.disabled = false;
-    parseResumeBtn.textContent = "AI 解析简历";
-    isParsingResume = false;
+    isImporting = false;
+    importResumeBtn.disabled = false;
+    uploadPdfBtn.disabled = false;
+    importResumeBtn.textContent = "AI 导入到标准简历";
   }
+}
+
+function buildResumeImportPrompt(rawText) {
+  const optionRules = schema
+    .getFieldCatalog()
+    .filter((field) => Array.isArray(field.options) && field.options.length > 0)
+    .map(
+      (field) =>
+        `- ${field.path}: ${field.options.filter(Boolean).join(" | ")}`
+    )
+    .join("\n");
+
+  return [
+    "请把下面的原始简历内容提取到固定 JSON 模板中。",
+    "要求：",
+    "1. 只输出 JSON，不要解释。",
+    "2. 只能使用模板中已有字段，不要新增字段。",
+    "3. 没有信息的字段保持空字符串。",
+    "4. 列表字段按时间从近到远填写前几个槽位，剩余槽位留空。",
+    "5. 日期尽量输出为 YYYY-MM-DD；若只能确认到月份，可输出 YYYY-MM。",
+    "6. 下列枚举字段只能使用给定选项值：",
+    optionRules,
+    "",
+    "固定 JSON 模板：",
+    schema.createImportTemplateString(),
+    "",
+    "原始简历内容：",
+    rawText,
+  ].join("\n");
 }
 
 function limitTextForPrompt(text) {
   const maxChars = 60000;
   if (text.length <= maxChars) return text;
+
   addLog(
     "warning",
-    `简历文本过长（${text.length} 字），已截断前 ${maxChars} 字用于解析；如信息缺失可删减后重试。`
+    `文本过长（${text.length} 字），已截断前 ${maxChars} 字用于导入。`
   );
   return text.slice(0, maxChars);
 }
@@ -526,18 +984,17 @@ async function extractTextFromPdf(file) {
 
   const total = pdf.numPages || 0;
   const parts = [];
-  for (let pageNo = 1; pageNo <= total; pageNo++) {
-    updateStatus("running", `解析PDF(${pageNo}/${total})...`);
+
+  for (let pageNo = 1; pageNo <= total; pageNo += 1) {
+    updateStatus("running", `解析 PDF (${pageNo}/${total})...`);
     const page = await pdf.getPage(pageNo);
     const content = await page.getTextContent();
+
     for (const item of content.items || []) {
       parts.push(item.str || "");
-      if (item.hasEOL) {
-        parts.push("\n");
-      } else {
-        parts.push(" ");
-      }
+      parts.push(item.hasEOL ? "\n" : " ");
     }
+
     parts.push("\n\n");
   }
 
@@ -556,70 +1013,32 @@ function getPdfJsLib() {
   return lib;
 }
 
-function renderResumeTable(value) {
-  resumeTableBodyEl.innerHTML = "";
-
-  if (!value || typeof value !== "object") {
-    resumeTableBodyEl.innerHTML = `
-      <tr><td class="empty-state" colspan="2">暂无解析结果，请先点击“AI 解析简历”。</td></tr>
-    `;
-    return;
-  }
-
-  const rows = flattenJson(value).sort((a, b) => a.pointer.localeCompare(b.pointer));
-  if (rows.length === 0) {
-    resumeTableBodyEl.innerHTML = `
-      <tr><td class="empty-state" colspan="2">解析结果为空，请尝试补充简历文本后重新解析。</td></tr>
-    `;
-    return;
-  }
-
-  for (const row of rows) {
-    const tr = document.createElement("tr");
-    const fieldTd = document.createElement("td");
-    fieldTd.textContent = row.label;
-
-    const valueTd = document.createElement("td");
-    const isLong = typeof row.value === "string" && row.value.length > 60;
-    const input = document.createElement(isLong ? "textarea" : "input");
-    input.className = isLong ? "table-textarea" : "table-input";
-    if (!isLong) input.type = "text";
-    input.value = row.value == null ? "" : String(row.value);
-    input.dataset.pointer = row.pointer;
-    input.addEventListener("input", () => {
-      saveResumeBtn.disabled = false;
-    });
-    valueTd.appendChild(input);
-
-    tr.appendChild(fieldTd);
-    tr.appendChild(valueTd);
-    resumeTableBodyEl.appendChild(tr);
-  }
-}
-
-// --- Autofill ---
 startFillBtn.addEventListener("click", async () => {
   if (isFilling) return;
 
-  if (!resumeStructured) {
-    addLog("warning", "请先在“简历配置”里解析并保存简历");
+  if (isResumeDirty) {
+    await persistResumeProfile({ silent: true });
+  }
+
+  if (!schema.hasAnyFilledField(resumeProfile)) {
+    addLog("warning", "请先在“标准简历”里填写至少一个字段");
     switchTab("resume");
     return;
   }
 
   const activeModel = await getActiveModel();
   if (!isModelConfigured(activeModel)) {
-    addLog("error", "请先在设置中配置 DeepSeek/API Key");
+    addLog("error", "请先在设置中配置模型");
     openModal();
     return;
   }
 
   const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
-  if (!tabs[0]) {
+  const tab = tabs[0];
+  if (!tab) {
     addLog("error", "无法获取当前标签页");
     return;
   }
-  const tab = tabs[0];
 
   if (
     !tab.url ||
@@ -637,312 +1056,77 @@ startFillBtn.addEventListener("click", async () => {
   startFillBtn.disabled = true;
   startFillBtnText.textContent = "填充中...";
   fillTipEl.hidden = true;
-  updateStatus("running", "填充中...");
-  addLog("info", "正在识别字段并填充（不会自动提交）...");
+  updateStatus("running", "映射中...");
+  addLog("info", "开始识别页面字段，准备进行 AI 字段映射...");
 
   try {
-    const memory = await loadFieldMemory();
     const injected = await ensureContentScriptInjected(tab.id);
     if (!injected) {
-      throw new Error("无法连接到页面，请刷新页面后重试");
+      throw new Error("无法连接到当前页面，请刷新页面后重试");
     }
 
     const config = pickConfig(activeModel);
     const response = await sendTabMessage(tab.id, {
       action: "startFill",
       config,
-      resume: resumeStructured,
-      memory,
+      resumeProfile,
     });
 
     if (!response?.success) {
       throw new Error(response?.message || "填充失败");
     }
 
-    fieldCountEl.textContent = response.fieldCount ?? 0;
-    filledCountEl.textContent = response.filledCount ?? 0;
-    lastFillResults = response.items || [];
-    renderFillResults(lastFillResults);
+    updateFillStats(
+      response.fieldCount || 0,
+      response.mappedCount || 0,
+      response.filledCount || 0
+    );
 
+    fillTipEl.textContent = response.cacheHit
+      ? "本次复用了本地字段映射缓存。"
+      : "本次已生成新的字段映射，并写入本地缓存。";
     fillTipEl.hidden = false;
-    updateStatus("ready", "完成");
+
     addLog(
       "success",
-      `填充完成：识别 ${response.fieldCount} 个字段，已填充 ${response.filledCount} 个。请检查后手动提交。`
+      `填充完成：识别 ${response.fieldCount} 个字段，映射 ${response.mappedCount} 个，成功填充 ${response.filledCount} 个。`
     );
-  } catch (e) {
-    addLog("error", `填充失败：${e.message}`);
+    updateStatus("ready", "完成");
+  } catch (error) {
+    addLog("error", `填充失败：${error.message}`);
     updateStatus("error", "失败");
   } finally {
     isFilling = false;
-    startFillBtn.disabled = !resumeStructured;
-    startFillBtnText.textContent = resumeStructured ? "开始填充" : "请先解析简历";
+    updateStartFillAvailability();
   }
 });
 
-clearResultsBtn.addEventListener("click", () => {
-  lastFillResults = null;
-  resultTableBodyEl.innerHTML = "";
-  resultSectionEl.hidden = true;
+clearMappingCacheBtn.addEventListener("click", async () => {
+  await chrome.storage.local.remove(MAPPING_CACHE_KEY);
+  addLog("success", "字段映射缓存已清空");
   fillTipEl.hidden = true;
-  fieldCountEl.textContent = "0";
-  filledCountEl.textContent = "0";
 });
 
-savePageMemoryBtn.addEventListener("click", async () => {
-  const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
-  if (!tabs[0]) {
-    addLog("error", "无法获取当前标签页");
-    return;
-  }
-
-  const tab = tabs[0];
-  if (
-    !tab.url ||
-    tab.url.startsWith("chrome://") ||
-    tab.url.startsWith("chrome-extension://") ||
-    tab.url.startsWith("edge://") ||
-    tab.url.startsWith("about:")
-  ) {
-    addLog("error", "请切换到要保存记忆的网页（非系统页面）");
-    updateStatus("error", "系统页面");
-    return;
-  }
-
-  savePageMemoryBtn.disabled = true;
-  updateStatus("running", "保存记忆...");
-  addLog("info", "正在扫描当前页面并保存已填写字段到记忆库...");
-
-  try {
-    const injected = await ensureContentScriptInjected(tab.id);
-    if (!injected) {
-      throw new Error("无法连接到页面，请刷新页面后重试");
-    }
-
-    const snapshot = await sendTabMessage(tab.id, { action: "snapshotPageMemory" });
-    if (!snapshot?.success) {
-      throw new Error(snapshot?.message || "页面字段解析失败");
-    }
-
-    const saved = await upsertFieldMemoryBulk(snapshot.items || []);
-    await renderMemoryTable();
-
-    updateStatus("ready", "就绪");
-    addLog("success", `记忆保存完成：新增/更新 ${saved} 条`);
-  } catch (e) {
-    updateStatus("error", "失败");
-    addLog("error", `保存记忆失败：${e.message}`);
-  } finally {
-    savePageMemoryBtn.disabled = false;
-  }
-});
-
-function renderFillResults(items) {
-  resultTableBodyEl.innerHTML = "";
-
-  if (!items || items.length === 0) {
-    resultTableBodyEl.innerHTML = `
-      <tr><td class="empty-state" colspan="4">没有可展示的匹配结果。</td></tr>
-    `;
-    resultSectionEl.hidden = false;
-    return;
-  }
-
-  for (const item of items) {
-    const tr = document.createElement("tr");
-
-    const fieldTd = document.createElement("td");
-    const baseLabel = item.fieldLabel || item.fieldId || "未知字段";
-    fieldTd.textContent = item.filled === false ? `${baseLabel}（未填）` : baseLabel;
-
-    const valueTd = document.createElement("td");
-    const valueInput = document.createElement(
-      typeof item.value === "string" && item.value.length > 60 ? "textarea" : "input"
-    );
-    valueInput.className =
-      valueInput.tagName.toLowerCase() === "textarea"
-        ? "table-textarea"
-        : "table-input";
-    if (valueInput.tagName.toLowerCase() === "input") valueInput.type = "text";
-    valueInput.value = item.value == null ? "" : String(item.value);
-    valueInput.dataset.fieldId = item.fieldId;
-    valueTd.appendChild(valueInput);
-
-    const reasonTd = document.createElement("td");
-    reasonTd.textContent =
-      item.reason || item.explanation || item.message || "";
-
-    const actionTd = document.createElement("td");
-    const actionWrap = document.createElement("div");
-    actionWrap.className = "action-buttons";
-
-    const refillBtn = document.createElement("button");
-    refillBtn.className = "btn btn-outline btn-sm";
-    refillBtn.textContent = "重填本字段";
-    refillBtn.addEventListener("click", async () => {
-      const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
-      if (!tabs[0]) return;
-      const tabId = tabs[0].id;
-
-      const newValue = valueInput.value;
-      refillBtn.disabled = true;
-      refillBtn.textContent = "重填中...";
-      try {
-        const resp = await sendTabMessage(tabId, {
-          action: "refillField",
-          fieldId: item.fieldId,
-          value: newValue,
-        });
-
-        if (!resp?.success) {
-          throw new Error(resp?.message || "重填失败");
-        }
-        addLog("success", `已重填：${item.fieldLabel || item.fieldId}`);
-      } catch (e) {
-        addLog("error", `重填失败：${e.message}`);
-      } finally {
-        refillBtn.disabled = false;
-        refillBtn.textContent = "重填本字段";
-      }
-    });
-
-    actionWrap.appendChild(refillBtn);
-    actionTd.appendChild(actionWrap);
-
-    tr.appendChild(fieldTd);
-    tr.appendChild(valueTd);
-    tr.appendChild(reasonTd);
-    tr.appendChild(actionTd);
-    resultTableBodyEl.appendChild(tr);
-  }
-
-  resultSectionEl.hidden = false;
+function updateFillStats(fieldCount, mappedCount, filledCount) {
+  fieldCountEl.textContent = fieldCount;
+  mappedCountEl.textContent = mappedCount;
+  filledCountEl.textContent = filledCount;
 }
 
 function updateStartFillAvailability() {
-  startFillBtn.disabled = !resumeStructured;
-  startFillBtnText.textContent = resumeStructured ? "开始填充" : "请先解析简历";
+  const hasData = schema.hasAnyFilledField(resumeProfile);
+  startFillBtn.disabled = !hasData || isFilling;
+  startFillBtnText.textContent = hasData ? "开始填充" : "请先填写标准简历";
 }
 
-// --- Field Memory ---
-function normalizeMemoryKey(text) {
-  return String(text || "")
-    .toLowerCase()
-    .replace(/\s+/g, "")
-    .replace(/[^a-z0-9\u4e00-\u9fff]+/g, "");
-}
-
-async function loadFieldMemory() {
-  const data = await chrome.storage.sync.get(["fieldMemory"]);
-  const memory = data.fieldMemory;
-  if (!memory || typeof memory !== "object") return {};
-  return memory;
-}
-
-async function upsertFieldMemoryBulk(items) {
-  const memory = await loadFieldMemory();
-  const now = Date.now();
-
-  let count = 0;
-  let seq = 0;
-
-  for (const item of items || []) {
-    const label = String(item?.label || "").trim();
-    const rawKey = String(item?.key || label || "").trim();
-    const key = normalizeMemoryKey(rawKey);
-    const value = String(item?.value ?? "").trim();
-
-    if (!key) continue;
-    if (!value) continue;
-
-    memory[key] = {
-      label: label || key,
-      value: String(item?.value ?? ""),
-      updatedAt: now + seq,
-    };
-    seq += 1;
-    count += 1;
-  }
-
-  // 限制数量，避免无限增长
-  const entries = Object.entries(memory).map(([k, v]) => ({
-    key: k,
-    updatedAt: Number(v?.updatedAt || 0),
-  }));
-  entries.sort((a, b) => b.updatedAt - a.updatedAt);
-  const keep = entries.slice(0, 200).map((e) => e.key);
-  const next = {};
-  for (const k of keep) next[k] = memory[k];
-
-  await chrome.storage.sync.set({ fieldMemory: next });
-  return count;
-}
-
-async function deleteFieldMemory(key) {
-  const normalizedKey = normalizeMemoryKey(key);
-  const memory = await loadFieldMemory();
-  if (!memory[normalizedKey]) return;
-  delete memory[normalizedKey];
-  await chrome.storage.sync.set({ fieldMemory: memory });
-}
-
-async function renderMemoryTable() {
-  const memory = await loadFieldMemory();
-  const entries = Object.entries(memory).map(([key, entry]) => ({
-    key,
-    label: entry?.label || key,
-    value: entry?.value || "",
-    updatedAt: Number(entry?.updatedAt || 0),
-  }));
-  entries.sort((a, b) => b.updatedAt - a.updatedAt);
-
-  memoryTableBodyEl.innerHTML = "";
-
-  if (entries.length === 0) {
-    memoryTableBodyEl.innerHTML = `
-      <tr><td class="empty-state" colspan="3">暂无记忆数据。</td></tr>
-    `;
-    return;
-  }
-
-  for (const item of entries) {
-    const tr = document.createElement("tr");
-
-    const fieldTd = document.createElement("td");
-    fieldTd.textContent = item.label;
-
-    const valueTd = document.createElement("td");
-    valueTd.className = "memory-value";
-    valueTd.textContent = item.value;
-
-    const actionTd = document.createElement("td");
-    const delBtn = document.createElement("button");
-    delBtn.className = "btn btn-outline btn-sm";
-    delBtn.textContent = "删除";
-    delBtn.addEventListener("click", async () => {
-      if (!confirm(`确定删除记忆项：${item.label} ？`)) return;
-      await deleteFieldMemory(item.key);
-      await renderMemoryTable();
-      addLog("success", `已删除：${item.label}`);
-    });
-    actionTd.appendChild(delBtn);
-
-    tr.appendChild(fieldTd);
-    tr.appendChild(valueTd);
-    tr.appendChild(actionTd);
-
-    memoryTableBodyEl.appendChild(tr);
-  }
-}
-
-// --- Content Script Injection / Messaging ---
 async function ensureContentScriptInjected(tabId) {
   try {
     const pong = await sendTabMessage(tabId, { action: "ping" });
     if (pong?.success) return true;
   } catch (_) {
-    // ignore and try inject
+    // Ignore and inject below.
   }
+
   return injectContentScript(tabId);
 }
 
@@ -966,14 +1150,14 @@ async function injectContentScript(tabId) {
 
     await chrome.scripting.executeScript({
       target: { tabId },
-      files: ["content.js"],
+      files: ["shared/resume-schema.js", "content.js"],
     });
 
     await new Promise((resolve) => setTimeout(resolve, 200));
     const pong = await sendTabMessage(tabId, { action: "ping" });
     return Boolean(pong?.success);
-  } catch (e) {
-    console.error("[popup] 注入 content script 失败:", e);
+  } catch (error) {
+    console.error("[popup] 注入 content script 失败:", error);
     return false;
   }
 }
@@ -985,12 +1169,12 @@ function sendTabMessage(tabId, message) {
         reject(new Error(chrome.runtime.lastError.message));
         return;
       }
+
       resolve(response);
     });
   });
 }
 
-// --- AI Call via Background ---
 function pickConfig(activeModel) {
   return {
     baseUrl: activeModel.baseUrl,
@@ -1003,51 +1187,47 @@ function callAI(config, prompt, mode) {
   return new Promise((resolve, reject) => {
     chrome.runtime.sendMessage(
       { action: "callAI", config, prompt, mode },
-      (resp) => {
+      (response) => {
         if (chrome.runtime.lastError) {
           reject(new Error(chrome.runtime.lastError.message));
           return;
         }
-        if (!resp) {
+
+        if (!response) {
           reject(new Error("AI 响应为空"));
           return;
         }
-        if (resp.success) {
-          resolve(resp.data);
+
+        if (response.success) {
+          resolve(response.data);
           return;
         }
-        reject(new Error(resp.error || "AI 调用失败"));
+
+        reject(new Error(response.error || "AI 调用失败"));
       }
     );
   });
-}
-
-function buildResumeParsePrompt(rawText) {
-  return `请从下面的中文简历文本中提取信息，并整理为结构化 JSON（只输出 JSON，不要输出其它文本，不要使用 Markdown 代码块）。\n\n要求：\n- 不要编造不存在的信息。\n- 适合用于自动填写网页表单。\n- 可以包含：基本信息、联系方式、教育经历、工作经历、项目经历、技能、证书、个人链接（如GitHub）、期望岗位/城市/薪资、自我介绍等。\n\n简历文本：\n${rawText}\n`;
 }
 
 function parseJsonFromAiText(text) {
   const trimmed = String(text || "").trim();
   if (!trimmed) throw new Error("AI 返回为空");
 
-  // 1) 直接尝试解析
   const direct = tryParseJson(trimmed);
   if (direct.ok) return direct.value;
 
-  // 2) 去掉代码块标记
   const noFences = trimmed
     .replace(/```json\s*/gi, "")
     .replace(/```\s*/g, "")
     .trim();
-  const noFencesParsed = tryParseJson(noFences);
-  if (noFencesParsed.ok) return noFencesParsed.value;
+  const noFenceParsed = tryParseJson(noFences);
+  if (noFenceParsed.ok) return noFenceParsed.value;
 
-  // 3) 提取第一个 JSON 对象/数组
   const extracted = extractLikelyJson(noFences);
   const extractedParsed = tryParseJson(extracted);
   if (extractedParsed.ok) return extractedParsed.value;
 
-  throw new Error("无法解析 AI 返回的 JSON，请尝试重新解析或补充简历文本");
+  throw new Error("无法解析 AI 返回的 JSON");
 }
 
 function tryParseJson(text) {
@@ -1064,7 +1244,6 @@ function extractLikelyJson(text) {
   const firstArr = text.indexOf("[");
   const lastArr = text.lastIndexOf("]");
 
-  // 选择更可能的 JSON 片段
   const objCandidate =
     firstObj !== -1 && lastObj !== -1 && lastObj > firstObj
       ? text.slice(firstObj, lastObj + 1)
@@ -1080,112 +1259,6 @@ function extractLikelyJson(text) {
   return objCandidate || arrCandidate || text;
 }
 
-function deepClone(obj) {
-  if (typeof structuredClone === "function") return structuredClone(obj);
-  return JSON.parse(JSON.stringify(obj));
-}
-
-function flattenJson(value) {
-  const out = [];
-  walk(value, "", out);
-  return out;
-
-  function walk(node, pointer, acc) {
-    if (node === null || typeof node !== "object") {
-      acc.push({
-        pointer: pointer || "/",
-        label: pointerToLabel(pointer || "/"),
-        value: node,
-      });
-      return;
-    }
-
-    if (Array.isArray(node)) {
-      if (node.length === 0) {
-        acc.push({
-          pointer: pointer || "/",
-          label: pointerToLabel(pointer || "/"),
-          value: "",
-        });
-        return;
-      }
-      node.forEach((item, idx) => {
-        walk(item, `${pointer}/${idx}`, acc);
-      });
-      return;
-    }
-
-    const keys = Object.keys(node);
-    if (keys.length === 0) {
-      acc.push({
-        pointer: pointer || "/",
-        label: pointerToLabel(pointer || "/"),
-        value: "",
-      });
-      return;
-    }
-
-    keys.forEach((key) => {
-      const seg = escapeJsonPointerSegment(key);
-      walk(node[key], `${pointer}/${seg}`, acc);
-    });
-  }
-}
-
-function pointerToLabel(pointer) {
-  if (!pointer || pointer === "/") return "(root)";
-  const parts = pointer
-    .split("/")
-    .slice(1)
-    .map((p) => unescapeJsonPointerSegment(p));
-  return parts.join(" / ");
-}
-
-function escapeJsonPointerSegment(seg) {
-  return String(seg).replace(/~/g, "~0").replace(/\//g, "~1");
-}
-
-function unescapeJsonPointerSegment(seg) {
-  return String(seg).replace(/~1/g, "/").replace(/~0/g, "~");
-}
-
-function setByJsonPointer(obj, pointer, rawValue) {
-  if (!pointer || pointer === "/") return;
-  const segments = pointer
-    .split("/")
-    .slice(1)
-    .map((p) => unescapeJsonPointerSegment(p));
-
-  let current = obj;
-  for (let i = 0; i < segments.length; i++) {
-    const key = segments[i];
-    const isLast = i === segments.length - 1;
-
-    if (Array.isArray(current)) {
-      const index = Number(key);
-      if (!Number.isInteger(index) || index < 0) return;
-      if (isLast) {
-        current[index] = rawValue;
-        return;
-      }
-      current = current[index];
-      continue;
-    }
-
-    if (current && typeof current === "object") {
-      if (isLast) {
-        current[key] = rawValue;
-        return;
-      }
-      current = current[key];
-      continue;
-    }
-
-    return;
-  }
-}
-
-// --- Logs / Status ---
 function updateStatus(type, text) {
   statusDot.className = `status-dot ${type}`;
   statusText.textContent = text;
@@ -1197,13 +1270,14 @@ function addLog(type, message) {
     hour: "2-digit",
     minute: "2-digit",
   });
-  const logItem = document.createElement("div");
-  logItem.className = `log-item log-${type}`;
-  logItem.innerHTML = `
+
+  const item = document.createElement("div");
+  item.className = `log-item log-${type}`;
+  item.innerHTML = `
     <span class="log-time">${time}</span>
     <span class="log-msg">${escapeHtml(message)}</span>
   `;
-  logContent.appendChild(logItem);
+  logContent.appendChild(item);
   logContent.scrollTop = logContent.scrollHeight;
 }
 
@@ -1219,19 +1293,23 @@ clearLogBtn.addEventListener("click", () => {
   addLog("info", "日志已清空");
 });
 
-// Message Listener（来自 content script）
 chrome.runtime.onMessage.addListener((message) => {
   switch (message.type) {
     case "log":
-      addLog(message.level, message.text);
+      addLog(message.level || "info", message.text || "");
       break;
     case "updateStats":
-      fieldCountEl.textContent = message.fieldCount ?? 0;
-      filledCountEl.textContent = message.filledCount ?? 0;
+      updateFillStats(
+        message.fieldCount ?? 0,
+        message.mappedCount ?? 0,
+        message.filledCount ?? 0
+      );
       break;
     case "error":
       updateStatus("error", "错误");
-      addLog("error", message.text);
+      addLog("error", message.text || "未知错误");
+      break;
+    default:
       break;
   }
 });

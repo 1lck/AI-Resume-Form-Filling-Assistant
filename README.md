@@ -3,9 +3,10 @@
 一个浏览器侧边栏扩展：你只需提供简历文本或上传“有文字层”的 PDF，扩展会用 DeepSeek（或任意 OpenAI 兼容 API）解析简历并在目标网页上自动识别表单字段后“一键填充”（不会自动提交）。
 
 ## 界面演示
-![alt text](image.png)
-![alt text](image-1.png)
-![alt text](image-2.png)
+![img.png](img.png)
+![img_2.png](img_2.png)
+![img_1.png](img_1.png)
+![img_3.png](img_3.png)
 
 ## 功能
 - 简历解析：粘贴简历/要点文本，或上传 PDF 自动提取文字并解析为结构化 JSON
