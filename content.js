@@ -11,6 +11,18 @@
     return;
   }
 
+  const diagnostics = window.ResumeDiagnostics;
+  if (!diagnostics) {
+    console.error("[简历填表助手] Resume diagnostics not found");
+    return;
+  }
+
+  const contentBridge = window.ResumeContentBridge;
+  if (!contentBridge) {
+    console.error("[简历填表助手] Resume content bridge not found");
+    return;
+  }
+
   const EXT_TAG = "[简历填表助手]";
   const MAPPING_CACHE_KEY = "fieldMappingCacheV2";
 
@@ -25,7 +37,13 @@
     const action = message?.action;
 
     if (action === "ping") {
-      sendResponse({ success: true });
+      sendResponse({
+        success: true,
+        version: contentBridge.CONTENT_SCRIPT_VERSION,
+        capabilities: {
+          fullDiagnostics: true,
+        },
+      });
       return;
     }
 
@@ -73,6 +91,10 @@
         fieldRuntimeMap.set(runtime.fieldId, runtime);
       }
 
+      for (const field of scan.fields) {
+        sendLog("info", diagnostics.formatFieldSummary(field));
+      }
+
       sendStats(lastFieldCount, 0, 0);
 
       if (lastFieldCount === 0) {
@@ -118,6 +140,22 @@
         mappingById.set(String(mapping.fieldId), mapping);
       }
 
+      for (const field of scan.fields) {
+        const mapping = mappingById.get(field.fieldId) || {
+          fieldId: field.fieldId,
+          resumePath: "",
+          reason: "未返回映射结果",
+          transform: { type: "none" },
+        };
+        const level = mapping.resumePath ? "info" : "warning";
+        sendLog(
+          level,
+          diagnostics.formatMappingSummary(field, mapping, {
+            source: cacheHit ? "cache" : "ai",
+          })
+        );
+      }
+
       lastMappedCount = Array.from(mappingById.values()).filter((item) =>
         Boolean(String(item.resumePath || "").trim())
       ).length;
@@ -129,17 +167,54 @@
 
       for (const field of scan.fields) {
         const mapping = mappingById.get(field.fieldId);
-        if (!mapping?.resumePath) continue;
+        if (!mapping?.resumePath) {
+          sendLog(
+            "warning",
+            diagnostics.formatSkipSummary(
+              field,
+              mapping,
+              "AI 未匹配到可用的标准简历字段",
+              "",
+              ""
+            )
+          );
+          continue;
+        }
 
         const runtime = fieldRuntimeMap.get(field.fieldId);
         const rawValue = schema.getValueByPath(resumeProfile, mapping.resumePath);
         const finalValue = deriveFillValue(rawValue, mapping.transform, runtime);
 
+        sendLog(
+          "info",
+          diagnostics.formatValueSummary(field, mapping, rawValue, finalValue)
+        );
+
         if (!hasMeaningfulFillValue(finalValue)) {
+          sendLog(
+            "warning",
+            diagnostics.formatSkipSummary(
+              field,
+              mapping,
+              "标准简历中没有可填写的值，或转换后为空",
+              rawValue,
+              finalValue
+            )
+          );
           continue;
         }
 
         const fillResult = await fillOne(runtime, finalValue);
+        sendLog(
+          fillResult.filled ? "success" : "warning",
+          diagnostics.formatFillSummary({
+            field,
+            mapping,
+            rawValue,
+            finalValue,
+            fillResult,
+          })
+        );
         if (fillResult.filled) {
           filledCount += 1;
         }

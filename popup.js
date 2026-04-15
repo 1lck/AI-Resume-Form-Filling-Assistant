@@ -27,6 +27,8 @@ const resumePdfFileEl = document.getElementById("resumePdfFile");
 
 const logContent = document.getElementById("logContent");
 const clearLogBtn = document.getElementById("clearLog");
+const selectLogDirectoryBtn = document.getElementById("selectLogDirectoryBtn");
+const logExportStatusEl = document.getElementById("logExportStatus");
 
 const settingsModal = document.getElementById("settingsModal");
 const openSettingsBtn = document.getElementById("openSettingsBtn");
@@ -52,6 +54,21 @@ if (!schema) {
   throw new Error("Resume schema is not available");
 }
 
+const logExport = window.ResumeLogExport;
+if (!logExport) {
+  throw new Error("Resume log export is not available");
+}
+
+const logVisibility = window.ResumeLogVisibility;
+if (!logVisibility) {
+  throw new Error("Resume log visibility is not available");
+}
+
+const contentBridge = window.ResumeContentBridge;
+if (!contentBridge) {
+  throw new Error("Resume content bridge is not available");
+}
+
 const RESUME_PROFILE_KEY = "resumeProfile";
 const RESUME_SCHEMA_VERSION_KEY = "resumeSchemaVersion";
 const RESUME_IMPORT_RAW_TEXT_KEY = "resumeImportRawText";
@@ -72,12 +89,16 @@ let isImporting = false;
 let isResumeDirty = false;
 let resumeProfile = schema.createEmptyResumeProfile();
 const collapsedResumeSections = new Set();
+let logProjectRootHandle = null;
+let activeFillSession = null;
 
 document.addEventListener("DOMContentLoaded", async () => {
   initTabs();
   initModalEvents();
+  initLogExportEvents();
   initResumeEditorEvents();
   await initModels();
+  await refreshLogExportStatus();
   await loadResumeProfile();
   updateStartFillAvailability();
 });
@@ -111,6 +132,178 @@ function initModalEvents() {
     editApiKeyInput.type = nextType;
     toggleEditApiKeyBtn.style.opacity = nextType === "text" ? "1" : "0.6";
   });
+}
+
+function initLogExportEvents() {
+  selectLogDirectoryBtn.addEventListener("click", async () => {
+    if (!logExport.supportsDirectoryPicker()) {
+      addLog("error", "当前浏览器不支持项目目录写入");
+      return;
+    }
+
+    selectLogDirectoryBtn.disabled = true;
+    try {
+      const rootHandle = await window.showDirectoryPicker({
+        id: "resume-log-project-root",
+        mode: "readwrite",
+      });
+
+      const permission = await logExport.getPermissionState(rootHandle, {
+        request: true,
+      });
+      if (permission !== "granted") {
+        throw new Error("目录写入权限未授予");
+      }
+
+      await logExport.ensureLogsDirectoryHandle(rootHandle);
+      await logExport.saveProjectRootHandle(rootHandle);
+      logProjectRootHandle = rootHandle;
+      await refreshLogExportStatus();
+      addLog(
+        "success",
+        `诊断日志将自动保存到 ${rootHandle.name}/${logExport.LOGS_DIR_NAME}/`
+      );
+    } catch (error) {
+      if (error?.name === "AbortError") {
+        addLog("info", "已取消选择项目目录");
+      } else {
+        addLog("error", `设置日志目录失败：${error.message}`);
+      }
+    } finally {
+      selectLogDirectoryBtn.disabled = false;
+    }
+  });
+}
+
+async function refreshLogExportStatus() {
+  if (!logExport.supportsDirectoryPicker()) {
+    logProjectRootHandle = null;
+    selectLogDirectoryBtn.disabled = true;
+    selectLogDirectoryBtn.textContent = "不支持目录写入";
+    logExportStatusEl.textContent =
+      "当前浏览器不支持项目目录自动写入。你仍然可以在侧边栏里查看运行日志。";
+    return;
+  }
+
+  selectLogDirectoryBtn.disabled = false;
+
+  let handle = null;
+  try {
+    handle = await logExport.loadProjectRootHandle();
+  } catch (error) {
+    logProjectRootHandle = null;
+    selectLogDirectoryBtn.textContent = "选择项目目录";
+    logExportStatusEl.textContent = `读取日志目录配置失败：${error.message}`;
+    return;
+  }
+
+  if (!handle) {
+    logProjectRootHandle = null;
+    selectLogDirectoryBtn.textContent = "选择项目目录";
+    logExportStatusEl.textContent =
+      "未配置自动导出。点击“选择项目目录”后，填充诊断日志会自动保存到所选目录下的 debug-logs/。";
+    return;
+  }
+
+  const permission = await logExport.getPermissionState(handle);
+  if (permission !== "granted") {
+    logProjectRootHandle = null;
+    selectLogDirectoryBtn.textContent = "重新选择项目目录";
+    logExportStatusEl.textContent =
+      "之前记住的项目目录权限已失效。点击“重新选择项目目录”后，将继续自动保存到 debug-logs/。";
+    return;
+  }
+
+  logProjectRootHandle = handle;
+  selectLogDirectoryBtn.textContent = "重新选择项目目录";
+  logExportStatusEl.textContent = `已配置自动导出：${handle.name}/${logExport.LOGS_DIR_NAME}/`;
+}
+
+function createFillSession(tab) {
+  return {
+    id: `fill-${Date.now()}`,
+    startedAt: new Date().toISOString(),
+    endedAt: null,
+    status: "running",
+    errorMessage: "",
+    tab: {
+      id: tab?.id ?? null,
+      url: tab?.url || "",
+      title: tab?.title || "",
+    },
+    stats: {
+      fieldCount: 0,
+      mappedCount: 0,
+      filledCount: 0,
+    },
+    logs: [],
+  };
+}
+
+function beginFillSession(tab) {
+  activeFillSession = createFillSession(tab);
+}
+
+function recordSessionLog(level, message, timestamp) {
+  if (!activeFillSession) return;
+  activeFillSession.logs.push({
+    level,
+    message,
+    timestamp,
+  });
+}
+
+function recordFillSessionStats(fieldCount, mappedCount, filledCount) {
+  if (!activeFillSession) return;
+  activeFillSession.stats = {
+    fieldCount: Number(fieldCount || 0),
+    mappedCount: Number(mappedCount || 0),
+    filledCount: Number(filledCount || 0),
+  };
+}
+
+function getCurrentFillStats() {
+  return {
+    fieldCount: Number(fieldCountEl.textContent || 0),
+    mappedCount: Number(mappedCountEl.textContent || 0),
+    filledCount: Number(filledCountEl.textContent || 0),
+  };
+}
+
+async function finalizeFillSession({ status, stats, errorMessage = "" } = {}) {
+  if (!activeFillSession) return;
+
+  const session = activeFillSession;
+  activeFillSession = null;
+  session.endedAt = new Date().toISOString();
+  session.status = status || "unknown";
+  session.errorMessage = errorMessage;
+  session.stats = {
+    ...session.stats,
+    ...(stats || {}),
+  };
+
+  if (!logProjectRootHandle) {
+    return;
+  }
+
+  try {
+    const permission = await logExport.getPermissionState(logProjectRootHandle);
+    if (permission !== "granted") {
+      logProjectRootHandle = null;
+      addLog(
+        "warning",
+        "项目目录授权已失效，本次未自动保存日志。请重新点击“选择项目目录”。"
+      );
+      await refreshLogExportStatus();
+      return;
+    }
+
+    const saved = await logExport.writeSessionLogFile(logProjectRootHandle, session);
+    addLog("info", `诊断日志已自动保存到 ${saved.relativePath}`);
+  } catch (error) {
+    addLog("error", `诊断日志保存失败：${error.message}`);
+  }
 }
 
 function openModal() {
@@ -1057,12 +1250,13 @@ startFillBtn.addEventListener("click", async () => {
   startFillBtnText.textContent = "填充中...";
   fillTipEl.hidden = true;
   updateStatus("running", "映射中...");
+  beginFillSession(tab);
   addLog("info", "开始识别页面字段，准备进行 AI 字段映射...");
 
   try {
     const injected = await ensureContentScriptInjected(tab.id);
     if (!injected) {
-      throw new Error("无法连接到当前页面，请刷新页面后重试");
+      throw new Error("当前页面仍在运行旧版插件脚本，请刷新页面后重试");
     }
 
     const config = pickConfig(activeModel);
@@ -1092,9 +1286,22 @@ startFillBtn.addEventListener("click", async () => {
       `填充完成：识别 ${response.fieldCount} 个字段，映射 ${response.mappedCount} 个，成功填充 ${response.filledCount} 个。`
     );
     updateStatus("ready", "完成");
+    await finalizeFillSession({
+      status: "success",
+      stats: {
+        fieldCount: response.fieldCount || 0,
+        mappedCount: response.mappedCount || 0,
+        filledCount: response.filledCount || 0,
+      },
+    });
   } catch (error) {
     addLog("error", `填充失败：${error.message}`);
     updateStatus("error", "失败");
+    await finalizeFillSession({
+      status: "error",
+      stats: getCurrentFillStats(),
+      errorMessage: error.message,
+    });
   } finally {
     isFilling = false;
     updateStartFillAvailability();
@@ -1111,6 +1318,7 @@ function updateFillStats(fieldCount, mappedCount, filledCount) {
   fieldCountEl.textContent = fieldCount;
   mappedCountEl.textContent = mappedCount;
   filledCountEl.textContent = filledCount;
+  recordFillSessionStats(fieldCount, mappedCount, filledCount);
 }
 
 function updateStartFillAvailability() {
@@ -1120,11 +1328,23 @@ function updateStartFillAvailability() {
 }
 
 async function ensureContentScriptInjected(tabId) {
+  let staleScriptDetected = false;
+
   try {
     const pong = await sendTabMessage(tabId, { action: "ping" });
-    if (pong?.success) return true;
+    if (contentBridge.contentScriptHasDiagnosticsSupport(pong)) {
+      return true;
+    }
+
+    if (pong?.success) {
+      staleScriptDetected = true;
+    }
   } catch (_) {
-    // Ignore and inject below.
+    // Ignore and inject below when there is no reachable content script.
+  }
+
+  if (staleScriptDetected) {
+    return false;
   }
 
   return injectContentScript(tabId);
@@ -1150,12 +1370,17 @@ async function injectContentScript(tabId) {
 
     await chrome.scripting.executeScript({
       target: { tabId },
-      files: ["shared/resume-schema.js", "content.js"],
+      files: [
+        "shared/resume-schema.js",
+        "shared/diagnostics.js",
+        "shared/content-bridge.js",
+        "content.js",
+      ],
     });
 
     await new Promise((resolve) => setTimeout(resolve, 200));
     const pong = await sendTabMessage(tabId, { action: "ping" });
-    return Boolean(pong?.success);
+    return Boolean(contentBridge.contentScriptHasDiagnosticsSupport(pong));
   } catch (error) {
     console.error("[popup] 注入 content script 失败:", error);
     return false;
@@ -1265,11 +1490,18 @@ function updateStatus(type, text) {
 }
 
 function addLog(type, message) {
-  const time = new Date().toLocaleTimeString("zh-CN", {
+  const now = new Date();
+  const time = now.toLocaleTimeString("zh-CN", {
     hour12: false,
     hour: "2-digit",
     minute: "2-digit",
   });
+
+  recordSessionLog(type, message, now.toISOString());
+
+  if (!logVisibility.shouldRenderLogInUi(type, message)) {
+    return;
+  }
 
   const item = document.createElement("div");
   item.className = `log-item log-${type}`;

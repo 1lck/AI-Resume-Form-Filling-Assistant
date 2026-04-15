@@ -136,7 +136,13 @@
         <div class="log-section">
           <div class="section-header">
             <span>运行日志</span>
-            <button class="btn-text" id="clearLog">清空</button>
+            <div class="section-actions">
+              <button class="btn-text" id="selectLogDirectoryBtn">选择项目目录</button>
+              <button class="btn-text" id="clearLog">清空</button>
+            </div>
+          </div>
+          <div class="tip" id="logExportStatus">
+            未配置自动导出。点击“选择项目目录”后，填充诊断日志会自动保存到所选目录下的 debug-logs/。
           </div>
           <div class="log-container" id="logContent">
             <div class="log-item log-info">
@@ -271,6 +277,9 @@
     </div>
     <script src="libs/pdfjs/pdf.min.js"></script>
     <script src="shared/resume-schema.js"></script>
+    <script src="shared/log-export.js"></script>
+    <script src="shared/log-visibility.js"></script>
+    <script src="shared/content-bridge.js"></script>
     <script src="popup.js"></script>
   </body>
 </html>

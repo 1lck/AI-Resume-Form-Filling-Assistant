@@ -27,7 +27,12 @@
   "content_scripts": [
     {
       "matches": ["<all_urls>"],
-      "js": ["shared/resume-schema.js", "content.js"],
+      "js": [
+        "shared/resume-schema.js",
+        "shared/diagnostics.js",
+        "shared/content-bridge.js",
+        "content.js"
+      ],
       "css": ["content.css"]
     }
   ]
