@@ -6,6 +6,8 @@ const statusText = document.getElementById("statusText");
 const tabsEl = document.getElementById("tabs");
 const tabFillEl = document.getElementById("tab-fill");
 const tabResumeEl = document.getElementById("tab-resume");
+const openResumeEditorBtn = document.getElementById("openResumeEditorBtn");
+const resumeSummaryGridEl = document.getElementById("resumeSummaryGrid");
 
 const fieldCountEl = document.getElementById("fieldCount");
 const mappedCountEl = document.getElementById("mappedCount");
@@ -103,11 +105,38 @@ document.addEventListener("DOMContentLoaded", async () => {
   updateStartFillAvailability();
 });
 
+chrome.storage.onChanged.addListener((changes, areaName) => {
+  if (areaName !== "sync") return;
+  if (
+    !changes[RESUME_PROFILE_KEY] &&
+    !changes[RESUME_IMPORT_RAW_TEXT_KEY] &&
+    !changes.resumeStructured &&
+    !changes.resumeRawText
+  ) {
+    return;
+  }
+
+  if (isResumeDirty || isImporting || isFilling) {
+    return;
+  }
+
+  loadResumeProfile().catch((error) => {
+    console.error("[popup] 同步简历配置失败:", error);
+  });
+});
+
 function initTabs() {
   tabsEl.addEventListener("click", (event) => {
     const tabBtn = event.target.closest(".tab");
     if (!tabBtn) return;
     switchTab(tabBtn.dataset.tab);
+  });
+}
+
+if (openResumeEditorBtn) {
+  openResumeEditorBtn.addEventListener("click", async () => {
+    const url = chrome.runtime.getURL("resume-editor.html");
+    await chrome.tabs.create({ url });
   });
 }
 
@@ -616,6 +645,7 @@ async function loadResumeProfile() {
 function renderResumeEditor(profile) {
   const sectionStats = buildResumeSectionStats(profile);
 
+  renderResumeSummary(sectionStats);
   renderResumeNav(sectionStats);
   resumeFormHost.innerHTML = "";
 
@@ -729,6 +759,31 @@ function renderResumeEditor(profile) {
     sectionEl.appendChild(headEl);
     sectionEl.appendChild(bodyEl);
     resumeFormHost.appendChild(sectionEl);
+  }
+}
+
+function renderResumeSummary(sectionStats) {
+  if (!resumeSummaryGridEl) return;
+
+  resumeSummaryGridEl.innerHTML = "";
+
+  for (const section of schema.sections) {
+    const stats = sectionStats.get(section.key) || {
+      totalFields: 0,
+      filledFields: 0,
+      itemCount: 0,
+      filledItems: 0,
+    };
+
+    const card = document.createElement("div");
+    card.className = "resume-summary-card";
+    card.innerHTML = `
+      <div class="resume-summary-title">${escapeHtml(section.label)}</div>
+      <div class="resume-summary-meta">${escapeHtml(
+        createResumeSectionSummary(section, stats)
+      )}</div>
+    `;
+    resumeSummaryGridEl.appendChild(card);
   }
 }
 

@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>简历配置 - AI 简历填表助手</title>
+    <link rel="stylesheet" href="popup.css" />
+    <link rel="stylesheet" href="resume-editor.css" />
+  </head>
+  <body class="resume-editor-page">
+    <div class="editor-shell">
+      <header class="editor-header">
+        <div class="editor-header-main">
+          <img class="logo-icon" src="icons/icon128.png" alt="AI 简历填表助手图标" />
+          <div class="editor-header-copy">
+            <h1>简历配置</h1>
+            <p>在宽页面里维护标准简历，保存后会同步给侧边栏自动填充流程。</p>
+          </div>
+        </div>
+        <div class="editor-toolbar">
+          <button class="btn btn-outline" id="reloadResumeBtn">重新加载</button>
+          <button class="btn btn-primary" id="saveResumeBtn">保存标准简历</button>
+        </div>
+      </header>
+
+      <main class="editor-main">
+        <div class="tip" id="pageStatus">正在加载标准简历...</div>
+        <div class="resume-editor-layout resume-editor-layout-wide">
+          <aside class="resume-nav" id="resumeNav"></aside>
+          <div class="resume-form-host" id="resumeFormHost"></div>
+        </div>
+
+        <div class="editor-import-section">
+          <div class="editor-import-header">
+            <div class="editor-import-header-icon">⬆</div>
+            <div class="editor-import-header-copy">
+              <div class="editor-import-title">导入辅助（可选）</div>
+              <div class="editor-import-desc">粘贴原始简历文本或上传 PDF，用 AI 预填标准字段，导入后请检查并保存。</div>
+            </div>
+          </div>
+          <div class="editor-import-body">
+            <div class="form-group" style="margin-bottom:0">
+              <label for="resumeImportText">原始简历文本</label>
+              <textarea
+                id="resumeImportText"
+                class="textarea"
+                placeholder="粘贴原始简历文本，或上传 PDF 后自动填入这里。"
+              ></textarea>
+            </div>
+            <div class="action-row">
+              <button class="btn btn-primary" id="importResumeBtn">AI 导入到标准简历</button>
+              <button class="btn btn-outline" id="uploadPdfBtn">上传 PDF 并导入</button>
+            </div>
+          </div>
+          <input type="file" id="resumePdfFile" accept="application/pdf" hidden />
+        </div>
+      </main>
+    </div>
+
+    <script src="libs/pdfjs/pdf.min.js"></script>
+    <script src="shared/resume-schema.js"></script>
+    <script src="resume-editor.js"></script>
+  </body>
+</html>

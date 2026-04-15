@@ -440,6 +440,69 @@ body {
   gap: 16px;
 }
 
+.resume-launch-card {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: linear-gradient(180deg, #ffffff 0%, #fafafa 100%);
+  padding: 16px;
+  display: flex;
+  gap: 16px;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.resume-launch-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
+.resume-launch-title {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text-main);
+}
+
+.resume-launch-desc {
+  font-size: 12px;
+  line-height: 1.7;
+  color: var(--text-secondary);
+}
+
+.resume-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.resume-summary-card {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--bg-card);
+  padding: 14px 14px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
+.resume-summary-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-main);
+}
+
+.resume-summary-meta {
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--text-secondary);
+}
+
+.resume-sidepanel-legacy {
+  display: none;
+}
+
 .section-header-normal {
   text-transform: none;
   letter-spacing: 0;
@@ -513,6 +576,15 @@ body {
 }
 
 @media (max-width: 720px) {
+  .resume-launch-card {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .resume-summary-grid {
+    grid-template-columns: 1fr;
+  }
+
   .resume-editor-layout {
     grid-template-columns: 92px minmax(0, 1fr);
   }

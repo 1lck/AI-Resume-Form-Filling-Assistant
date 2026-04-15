@@ -93,43 +93,64 @@
         <section class="tab-panel" id="tab-resume">
           <div class="section-block">
             <div class="section-header section-header-normal">
-              <span>标准化简历字段</span>
-              <div class="section-actions">
-                <button class="btn-text" id="reloadResumeBtn">重新加载</button>
-              </div>
+              <span>简历配置</span>
             </div>
             <div class="tip">
-              主流程以这份标准简历为准。请尽量填写完整，尤其是基本信息、工作经历、教育经历和求职偏好。
+              简历字段较多，推荐在独立网页里编辑。新页面会复用当前扩展里的同一份标准简历数据。
             </div>
-            <div class="resume-editor-layout">
-              <aside class="resume-nav" id="resumeNav"></aside>
-              <div class="resume-form-host" id="resumeFormHost"></div>
+            <div class="resume-launch-card">
+              <div class="resume-launch-copy">
+                <div class="resume-launch-title">在宽页面里配置个人简历</div>
+                <div class="resume-launch-desc">
+                  更适合填写长文本、工作经历、教育经历和项目说明，保存后会立即同步到自动填充流程。
+                </div>
+              </div>
+              <button class="btn btn-primary" id="openResumeEditorBtn">打开简历配置页</button>
             </div>
-            <div class="action-row">
-              <button class="btn btn-primary" id="saveResumeBtn">保存标准简历</button>
-            </div>
+            <div class="resume-summary-grid" id="resumeSummaryGrid"></div>
           </div>
 
-          <div class="section-block">
-            <div class="section-header section-header-normal">
-              <span>导入辅助（可选）</span>
+          <div class="resume-sidepanel-legacy" hidden>
+            <div class="section-block">
+              <div class="section-header section-header-normal">
+                <span>标准化简历字段</span>
+                <div class="section-actions">
+                  <button class="btn-text" id="reloadResumeBtn">重新加载</button>
+                </div>
+              </div>
+              <div class="tip">
+                主流程以这份标准简历为准。请尽量填写完整，尤其是基本信息、工作经历、教育经历和求职偏好。
+              </div>
+              <div class="resume-editor-layout">
+                <aside class="resume-nav" id="resumeNav"></aside>
+                <div class="resume-form-host" id="resumeFormHost"></div>
+              </div>
+              <div class="action-row">
+                <button class="btn btn-primary" id="saveResumeBtn">保存标准简历</button>
+              </div>
             </div>
-            <div class="tip">
-              你仍然可以粘贴原始简历文本或上传 PDF，用 AI 预填上面的标准字段；导入后请自行检查并保存。
+
+            <div class="section-block">
+              <div class="section-header section-header-normal">
+                <span>导入辅助（可选）</span>
+              </div>
+              <div class="tip">
+                你仍然可以粘贴原始简历文本或上传 PDF，用 AI 预填上面的标准字段；导入后请自行检查并保存。
+              </div>
+              <div class="form-group">
+                <label for="resumeImportText">原始简历文本</label>
+                <textarea
+                  id="resumeImportText"
+                  class="textarea"
+                  placeholder="粘贴原始简历文本，或上传 PDF 后自动填入这里。"
+                ></textarea>
+              </div>
+              <div class="action-row">
+                <button class="btn btn-primary" id="importResumeBtn">AI 导入到标准简历</button>
+                <button class="btn btn-outline" id="uploadPdfBtn">上传 PDF 并导入</button>
+              </div>
+              <input type="file" id="resumePdfFile" accept="application/pdf" hidden />
             </div>
-            <div class="form-group">
-              <label for="resumeImportText">原始简历文本</label>
-              <textarea
-                id="resumeImportText"
-                class="textarea"
-                placeholder="粘贴原始简历文本，或上传 PDF 后自动填入这里。"
-              ></textarea>
-            </div>
-            <div class="action-row">
-              <button class="btn btn-primary" id="importResumeBtn">AI 导入到标准简历</button>
-              <button class="btn btn-outline" id="uploadPdfBtn">上传 PDF 并导入</button>
-            </div>
-            <input type="file" id="resumePdfFile" accept="application/pdf" hidden />
           </div>
         </section>
 
