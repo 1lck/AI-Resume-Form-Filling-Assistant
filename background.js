@@ -52,7 +52,7 @@ async function callAI(config, prompt, mode) {
 
 你将收到一个 JSON，包含：
 - fields：当前页面识别到的表单字段
-- resumeFields：预先定义好的标准简历字段目录（含 path、label、valuePreview 等）
+- resumeFields：预先定义好的标准简历字段目录（含 path、label、sectionLabel、itemLabel、hasValue、valuePreview 等）
 
 你的任务：
 1) 为每个页面 field 选择最合适的 resumePath
@@ -60,6 +60,22 @@ async function callAI(config, prompt, mode) {
 3) 若字段需要简单转换，可返回 transform
 4) 若没有合适字段，resumePath 返回空字符串
 5) 只输出 JSON（不要输出其它文本，不要 Markdown 代码块）
+
+映射原则：
+1) 优先综合 field 的 label、context、options、所在区块语义，与 resumeFields 的 label、sectionLabel、itemLabel、path、valuePreview 一起判断
+2) 当多个候选语义接近时，优先选择 sectionLabel / itemLabel 更一致、且 hasValue=true 的 resumePath
+3) 对同一区块内重复出现的“起止时间”字段，通常前一个映射开始时间，后一个映射结束时间
+
+校招场景优先级：
+1) 含“实习”“实习经历”“实习公司”“实习岗位”等语义时，优先映射到 internships.*，不要优先映射到 workExperiences.*
+2) 含“学生组织”“社团”“校园经历”“志愿服务”“科研助理”“班干部”“校园活动”等语义时，优先映射到 campusExperiences.*
+3) 含“学历类型”“培养方式”“实验室”“领域方向”“导师”“学号”“班级”“学制”等语义时，优先映射到 educations.*
+4) 含“学校名称”“学院”“专业”“学历”“GPA”“排名”“论文”“毕业状态”等教育语义时，也优先映射到 educations.*
+
+保守规则：
+1) 如果页面字段只是状态性复选框，例如“没有实习经历”“无实习经历”“暂无项目经历”，只有在 resumeFields 中存在明确语义等价的布尔字段时才映射；否则返回空字符串
+2) 不要仅因为字段都出现在同一块区域，就把教育字段映射到 personal.* 或 additional.*
+3) 没有足够语义证据时，宁可不映射，也不要勉强猜测
 
 输出格式（严格遵守）：
 {
