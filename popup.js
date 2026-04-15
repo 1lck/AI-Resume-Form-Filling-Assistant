@@ -1373,6 +1373,7 @@ async function injectContentScript(tabId) {
       files: [
         "shared/resume-schema.js",
         "shared/diagnostics.js",
+        "shared/field-text.js",
         "shared/content-bridge.js",
         "content.js",
       ],

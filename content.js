@@ -17,6 +17,12 @@
     return;
   }
 
+  const fieldText = window.ResumeFieldText;
+  if (!fieldText) {
+    console.error("[简历填表助手] Resume field text helpers not found");
+    return;
+  }
+
   const contentBridge = window.ResumeContentBridge;
   if (!contentBridge) {
     console.error("[简历填表助手] Resume content bridge not found");
@@ -25,6 +31,10 @@
 
   const EXT_TAG = "[简历填表助手]";
   const MAPPING_CACHE_KEY = "fieldMappingCacheV2";
+  const CONTROL_SELECTOR =
+    'input, textarea, select, button, option, svg, path, style, script, noscript, [contenteditable="true"], [contenteditable=""], [aria-hidden="true"]';
+  const STRUCTURAL_CONTAINER_SELECTOR =
+    '[class*="form"],[class*="Form"],[class*="field"],[class*="Field"],[class*="item"],[class*="Item"],[class*="row"],[class*="Row"],[class*="group"],[class*="Group"],[class*="cell"],[class*="Cell"],fieldset,section,article,tr,li,td,th,dl';
 
   const fieldRuntimeMap = new Map();
 
@@ -698,6 +708,9 @@
     const wrappingText = normalizeText(wrapping?.textContent || "");
     if (wrappingText) return wrappingText;
 
+    const structuralLabel = getStructuralFieldLabel(el);
+    if (structuralLabel) return structuralLabel;
+
     const placeholder = normalizeText(el.getAttribute?.("placeholder") || "");
     if (placeholder) return placeholder;
 
@@ -706,12 +719,11 @@
   }
 
   function getFieldContext(el) {
-    const container =
-      el.closest?.(
-        'fieldset,[class*="form"],[class*="Form"],[class*="field"],[class*="Field"],[class*="item"],[class*="Item"],[class*="row"],[class*="Row"],section,article,tr,li'
-      ) || el.parentElement;
-
-    const text = normalizeText(container?.textContent || "");
+    const container = getStructuralContainer(el);
+    const text = getNodeTextWithoutControls(container, {
+      skipNode: el,
+      maxLength: 240,
+    });
     if (!text) return "";
     return text.length > 160 ? `${text.slice(0, 157)}...` : text;
   }
@@ -746,10 +758,104 @@
   }
 
   function normalizeText(text) {
-    return String(text || "")
-      .replace(/\s+/g, " ")
-      .replace(/[\r\n]+/g, " ")
-      .trim();
+    return fieldText.normalizeFieldText(text);
+  }
+
+  function getStructuralFieldLabel(el) {
+    const candidates = [];
+    const containers = collectRelevantContainers(el);
+
+    for (const container of containers) {
+      for (const child of Array.from(container.children || [])) {
+        if (child === el || child.contains?.(el)) continue;
+
+        const directText = getNodeTextWithoutControls(child, {
+          skipNode: el,
+          maxLength: 120,
+        });
+        if (directText) {
+          candidates.push(directText);
+        }
+
+        const nestedLabelNodes = child.querySelectorAll?.(
+          '[class*="label"],[class*="Label"],[class*="title"],[class*="Title"],[class*="name"],[class*="Name"],[class*="caption"],[class*="Caption"],label,legend,dt,th'
+        );
+        for (const node of nestedLabelNodes || []) {
+          const nestedText = getNodeTextWithoutControls(node, {
+            skipNode: el,
+            maxLength: 120,
+          });
+          if (nestedText) {
+            candidates.push(nestedText);
+          }
+        }
+      }
+    }
+
+    let current = el;
+    for (let depth = 0; current && depth < 4; depth += 1) {
+      const previous = current.previousElementSibling;
+      if (previous) {
+        const previousText = getNodeTextWithoutControls(previous, {
+          skipNode: el,
+          maxLength: 120,
+        });
+        if (previousText) {
+          candidates.push(previousText);
+        }
+      }
+      current = current.parentElement;
+    }
+
+    return fieldText.selectBestFieldTextCandidate(candidates);
+  }
+
+  function collectRelevantContainers(el) {
+    const containers = [];
+    let current = el.parentElement;
+
+    while (current && containers.length < 4) {
+      if (current.matches?.(STRUCTURAL_CONTAINER_SELECTOR)) {
+        containers.push(current);
+      }
+      current = current.parentElement;
+    }
+
+    if (containers.length === 0 && el.parentElement) {
+      containers.push(el.parentElement);
+    }
+
+    return containers;
+  }
+
+  function getStructuralContainer(el) {
+    return collectRelevantContainers(el)[0] || el.parentElement;
+  }
+
+  function getNodeTextWithoutControls(node, { skipNode = null, maxLength = 200 } = {}) {
+    if (!node) return "";
+
+    try {
+      const clone = node.cloneNode(true);
+      const selectors = [CONTROL_SELECTOR];
+
+      if (skipNode?.id) {
+        selectors.push(`#${cssEscape(skipNode.id)}`);
+      }
+
+      for (const child of clone.querySelectorAll(selectors.join(","))) {
+        child.remove();
+      }
+
+      const text = normalizeText(clone.textContent || "");
+      if (!fieldText.isMeaningfulFieldText(text)) {
+        return "";
+      }
+
+      return maxLength && text.length > maxLength ? `${text.slice(0, maxLength - 3)}...` : text;
+    } catch (_) {
+      return "";
+    }
   }
 
   function cssEscape(value) {
