@@ -17,3 +17,21 @@ test("popup fallback injection includes all shared content helpers", () => {
   assert.match(source, /shared\/content-bridge\.js/);
   assert.match(source, /content\.js/);
 });
+
+test("popup fill runner sends mode and scope for new fill actions", () => {
+  const source = fs.readFileSync(
+    path.join(__dirname, "../popup.js"),
+    "utf8"
+  );
+  const html = fs.readFileSync(
+    path.join(__dirname, "../popup.html"),
+    "utf8"
+  );
+
+  assert.match(html, /id="startIncrementalFillBtn"/);
+  assert.match(html, /id="startSelectionFillBtn"/);
+  assert.match(source, /fillMode: actionConfig\.fillMode/);
+  assert.match(source, /scope: actionConfig\.scope/);
+  assert.match(source, /incrementalPage/);
+  assert.match(source, /selection/);
+});

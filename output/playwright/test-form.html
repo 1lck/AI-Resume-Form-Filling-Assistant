@@ -1,0 +1,112 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Resume Fill Smoke Test</title>
+    <style>
+      body {
+        margin: 0;
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        background: #f5f5f5;
+        color: #111827;
+      }
+
+      .page {
+        max-width: 1100px;
+        margin: 0 auto;
+        padding: 40px 24px 80px;
+      }
+
+      h1 {
+        margin: 0 0 8px;
+        font-size: 30px;
+      }
+
+      p {
+        margin: 0 0 24px;
+        color: #4b5563;
+      }
+
+      .grid {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 24px;
+      }
+
+      .card {
+        border: 1px solid #d1d5db;
+        border-radius: 18px;
+        background: white;
+        padding: 24px;
+        box-shadow: 0 10px 30px rgba(15, 23, 42, 0.06);
+      }
+
+      .card.selected-zone {
+        outline: 2px dashed #111827;
+        outline-offset: 4px;
+      }
+
+      .field {
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+        margin-bottom: 16px;
+      }
+
+      .field:last-child {
+        margin-bottom: 0;
+      }
+
+      label {
+        font-size: 14px;
+        font-weight: 600;
+      }
+
+      input,
+      textarea {
+        width: 100%;
+        padding: 12px 14px;
+        border: 1px solid #cbd5e1;
+        border-radius: 12px;
+        font-size: 15px;
+        box-sizing: border-box;
+      }
+
+      textarea {
+        min-height: 120px;
+        resize: vertical;
+      }
+    </style>
+  </head>
+  <body>
+    <main class="page">
+      <h1>本地联调表单</h1>
+      <p>左侧用于验证增量填入，右侧用于验证选区填入。</p>
+
+      <div class="grid">
+        <section class="card" id="incremental-card">
+          <div class="field">
+            <label for="fullName">姓名</label>
+            <input id="fullName" name="fullName" type="text" value="已有姓名" />
+          </div>
+          <div class="field">
+            <label for="email">邮箱</label>
+            <input id="email" name="email" type="email" />
+          </div>
+        </section>
+
+        <section class="card selected-zone" id="selection-card">
+          <div class="field">
+            <label for="jobTitle">应聘岗位</label>
+            <input id="jobTitle" name="jobTitle" type="text" />
+          </div>
+          <div class="field">
+            <label for="selfIntro">个人介绍</label>
+            <textarea id="selfIntro" name="selfIntro"></textarea>
+          </div>
+        </section>
+      </div>
+    </main>
+  </body>
+</html>

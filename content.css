@@ -14,6 +14,39 @@
   --ai-shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.05), 0 4px 6px -2px rgba(0, 0, 0, 0.02);
 }
 
+.ai-resume-selection-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 2147483647;
+  cursor: crosshair;
+  background: rgba(9, 9, 11, 0.08);
+  backdrop-filter: blur(1px);
+}
+
+.ai-resume-selection-box {
+  position: fixed;
+  border: 2px solid rgba(24, 24, 27, 0.92);
+  background: rgba(255, 255, 255, 0.2);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.55);
+  pointer-events: none;
+}
+
+.ai-resume-selection-hint {
+  position: fixed;
+  top: 20px;
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 10px 14px;
+  border-radius: 999px;
+  background: rgba(24, 24, 27, 0.92);
+  color: #ffffff;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  font-size: 13px;
+  line-height: 1.4;
+  box-shadow: var(--ai-shadow-lg);
+  pointer-events: none;
+}
+
 /* 正在处理的题目 - 脉冲动画 */
 .ai-answer-processing {
   position: relative;

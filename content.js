@@ -51,6 +51,10 @@
     'h1,h2,h3,h4,h5,h6,[role="heading"],[class*="section"],[class*="Section"],[class*="header"],[class*="Header"],[class*="title"],[class*="Title"],legend';
   const STRUCTURAL_CONTAINER_SELECTOR =
     '[class*="form"],[class*="Form"],[class*="field"],[class*="Field"],[class*="item"],[class*="Item"],[class*="row"],[class*="Row"],[class*="group"],[class*="Group"],[class*="cell"],[class*="Cell"],fieldset,section,article,tr,li,td,th,dl';
+  const SELECTION_OVERLAY_ID = "ai-resume-fill-selection-overlay";
+  const SELECTION_BOX_ID = "ai-resume-fill-selection-box";
+  const SELECTION_HINT_ID = "ai-resume-fill-selection-hint";
+  const MIN_SELECTION_SIZE = 12;
 
   const fieldRuntimeMap = new Map();
 
@@ -84,7 +88,10 @@
     }
 
     if (action === "startFill") {
-      handleStartFill(message.config, message.resumeProfile)
+      handleStartFill(message.config, message.resumeProfile, {
+        fillMode: message.fillMode,
+        scope: message.scope,
+      })
         .then((result) => sendResponse(result))
         .catch((error) =>
           sendResponse({ success: false, message: error?.message || String(error) })
@@ -93,7 +100,7 @@
     }
   });
 
-  async function handleStartFill(config, resumeProfile) {
+  async function handleStartFill(config, resumeProfile, request = {}) {
     if (isWorking) {
       return { success: false, message: "正在执行中，请稍后再试" };
     }
@@ -105,8 +112,33 @@
         throw new Error("标准简历为空：请先在侧边栏填写或导入标准简历");
       }
 
-      sendLog("info", "开始扫描当前页面表单字段...");
-      const scan = scanFields();
+      const fillMode = request?.fillMode === "incremental" ? "incremental" : "overwrite";
+      const scope = request?.scope === "selection" ? "selection" : "page";
+      let selectionRect = null;
+
+      if (scope === "selection") {
+        sendLog("info", "已进入选区模式：请在页面上拖拽框选要填写的区域。");
+        selectionRect = await requestSelectionRect();
+        if (!selectionRect) {
+          return {
+            success: false,
+            canceled: true,
+            message: "已取消选区填入",
+          };
+        }
+        sendLog(
+          "info",
+          `选区已确认：left=${Math.round(selectionRect.left)} top=${Math.round(
+            selectionRect.top
+          )} width=${Math.round(selectionRect.width)} height=${Math.round(selectionRect.height)}`
+        );
+      }
+
+      sendLog(
+        "info",
+        scope === "selection" ? "开始扫描选区内表单字段..." : "开始扫描当前页面表单字段..."
+      );
+      const scan = scanFields({ scope, selectionRect });
 
       lastFieldCount = scan.fields.length;
       lastMappedCount = 0;
@@ -126,7 +158,10 @@
       if (lastFieldCount === 0) {
         return {
           success: false,
-          message: "未识别到可填写字段，请确认当前页面包含表单",
+          message:
+            scope === "selection"
+              ? "选区内未识别到可填写字段，请重新框选后再试"
+              : "未识别到可填写字段，请确认当前页面包含表单",
         };
       }
 
@@ -195,7 +230,12 @@
       ).length;
 
       sendStats(lastFieldCount, lastMappedCount, 0);
-      sendLog("info", "开始根据映射结果执行本地填充...");
+      sendLog(
+        "info",
+        fillMode === "incremental"
+          ? "开始根据映射结果执行增量填充..."
+          : "开始根据映射结果执行本地填充..."
+      );
 
       let filledCount = 0;
 
@@ -216,6 +256,20 @@
         }
 
         const runtime = fieldRuntimeMap.get(field.fieldId);
+        if (fillMode === "incremental" && hasExistingFieldValue(runtime)) {
+          sendLog(
+            "warning",
+            diagnostics.formatSkipSummary(
+              field,
+              mapping,
+              "字段已有内容，增量模式下不覆盖",
+              "",
+              ""
+            )
+          );
+          continue;
+        }
+
         const rawValue = schema.getValueByPath(resumeProfile, mapping.resumePath);
         const finalValue = deriveFillValue(rawValue, mapping.transform, runtime);
 
@@ -451,8 +505,135 @@
     return String(value || "").trim();
   }
 
-  function scanFields() {
-    const root = pickLikelyFormRoot();
+  async function requestSelectionRect() {
+    cleanupSelectionOverlay();
+
+    return new Promise((resolve) => {
+      const overlay = document.createElement("div");
+      overlay.id = SELECTION_OVERLAY_ID;
+      overlay.className = "ai-resume-selection-overlay";
+
+      const box = document.createElement("div");
+      box.id = SELECTION_BOX_ID;
+      box.className = "ai-resume-selection-box";
+      box.hidden = true;
+
+      const hint = document.createElement("div");
+      hint.id = SELECTION_HINT_ID;
+      hint.className = "ai-resume-selection-hint";
+      hint.textContent = "拖拽框选要填写的区域，按 Esc 取消";
+
+      overlay.appendChild(box);
+      overlay.appendChild(hint);
+      document.documentElement.appendChild(overlay);
+
+      let startPoint = null;
+      let isDragging = false;
+
+      const cleanup = () => {
+        window.removeEventListener("keydown", onKeyDown, true);
+        overlay.removeEventListener("pointerdown", onPointerDown, true);
+        overlay.removeEventListener("pointermove", onPointerMove, true);
+        overlay.removeEventListener("pointerup", onPointerUp, true);
+        overlay.removeEventListener("pointercancel", onPointerCancel, true);
+        overlay.remove();
+      };
+
+      const finish = (rect) => {
+        cleanup();
+        resolve(rect);
+      };
+
+      const onKeyDown = (event) => {
+        if (event.key !== "Escape") return;
+        event.preventDefault();
+        finish(null);
+      };
+
+      const onPointerDown = (event) => {
+        if (event.button !== 0) return;
+        event.preventDefault();
+        startPoint = { x: event.clientX, y: event.clientY };
+        isDragging = true;
+        box.hidden = false;
+        updateSelectionBox(box, startPoint, startPoint);
+      };
+
+      const onPointerMove = (event) => {
+        if (!isDragging || !startPoint) return;
+        event.preventDefault();
+        updateSelectionBox(box, startPoint, { x: event.clientX, y: event.clientY });
+      };
+
+      const onPointerCancel = (event) => {
+        event.preventDefault();
+        finish(null);
+      };
+
+      const onPointerUp = (event) => {
+        if (!isDragging || !startPoint) {
+          finish(null);
+          return;
+        }
+
+        event.preventDefault();
+        const rect = normalizeSelectionRect(startPoint, {
+          x: event.clientX,
+          y: event.clientY,
+        });
+        isDragging = false;
+        startPoint = null;
+
+        if (!rect || rect.width < MIN_SELECTION_SIZE || rect.height < MIN_SELECTION_SIZE) {
+          finish(null);
+          return;
+        }
+
+        finish(rect);
+      };
+
+      window.addEventListener("keydown", onKeyDown, true);
+      overlay.addEventListener("pointerdown", onPointerDown, true);
+      overlay.addEventListener("pointermove", onPointerMove, true);
+      overlay.addEventListener("pointerup", onPointerUp, true);
+      overlay.addEventListener("pointercancel", onPointerCancel, true);
+    });
+  }
+
+  function cleanupSelectionOverlay() {
+    document.getElementById(SELECTION_OVERLAY_ID)?.remove();
+  }
+
+  function updateSelectionBox(box, startPoint, endPoint) {
+    if (!box) return;
+    const rect = normalizeSelectionRect(startPoint, endPoint);
+    if (!rect) return;
+
+    box.style.left = `${rect.left}px`;
+    box.style.top = `${rect.top}px`;
+    box.style.width = `${rect.width}px`;
+    box.style.height = `${rect.height}px`;
+  }
+
+  function normalizeSelectionRect(startPoint, endPoint) {
+    if (!startPoint || !endPoint) return null;
+    const left = Math.min(startPoint.x, endPoint.x);
+    const top = Math.min(startPoint.y, endPoint.y);
+    const right = Math.max(startPoint.x, endPoint.x);
+    const bottom = Math.max(startPoint.y, endPoint.y);
+
+    return {
+      left,
+      top,
+      right,
+      bottom,
+      width: Math.max(0, right - left),
+      height: Math.max(0, bottom - top),
+    };
+  }
+
+  function scanFields({ scope = "page", selectionRect = null } = {}) {
+    const root = scope === "selection" ? document : pickLikelyFormRoot();
     const elements = collectControls(root);
 
     const fields = [];
@@ -682,7 +863,89 @@
       });
     }
 
+    if (scope === "selection" && selectionRect) {
+      const allowedFieldIds = new Set();
+
+      for (const item of runtime) {
+        if (runtimeMatchesSelection(item, selectionRect)) {
+          allowedFieldIds.add(item.fieldId);
+        }
+      }
+
+      return {
+        fields: fields.filter((field) => allowedFieldIds.has(field.fieldId)),
+        runtime: runtime.filter((item) => allowedFieldIds.has(item.fieldId)),
+      };
+    }
+
     return { fields, runtime };
+  }
+
+  function runtimeMatchesSelection(runtime, selectionRect) {
+    const runtimeRect = getRuntimeViewportRect(runtime);
+    if (!runtimeRect) return false;
+    return rectsIntersect(runtimeRect, selectionRect);
+  }
+
+  function getRuntimeViewportRect(runtime) {
+    if (!runtime) return null;
+
+    if (runtime.el) {
+      return rectFromDomRect(runtime.el.getBoundingClientRect());
+    }
+
+    if (Array.isArray(runtime.options) && runtime.options.length > 0) {
+      const rects = runtime.options
+        .map((option) => rectFromDomRect(option?.el?.getBoundingClientRect?.()))
+        .filter(Boolean);
+      return mergeRects(rects);
+    }
+
+    return null;
+  }
+
+  function rectFromDomRect(rect) {
+    if (!rect) return null;
+    const width = Number(rect.width || 0);
+    const height = Number(rect.height || 0);
+    if (width <= 0 || height <= 0) return null;
+
+    return {
+      left: Number(rect.left || 0),
+      top: Number(rect.top || 0),
+      right: Number(rect.right || 0),
+      bottom: Number(rect.bottom || 0),
+      width,
+      height,
+    };
+  }
+
+  function mergeRects(rects) {
+    if (!Array.isArray(rects) || rects.length === 0) return null;
+
+    const left = Math.min(...rects.map((rect) => rect.left));
+    const top = Math.min(...rects.map((rect) => rect.top));
+    const right = Math.max(...rects.map((rect) => rect.right));
+    const bottom = Math.max(...rects.map((rect) => rect.bottom));
+
+    return {
+      left,
+      top,
+      right,
+      bottom,
+      width: Math.max(0, right - left),
+      height: Math.max(0, bottom - top),
+    };
+  }
+
+  function rectsIntersect(leftRect, rightRect) {
+    if (!leftRect || !rightRect) return false;
+    return !(
+      leftRect.right < rightRect.left ||
+      leftRect.left > rightRect.right ||
+      leftRect.bottom < rightRect.top ||
+      leftRect.top > rightRect.bottom
+    );
   }
 
   function pickLikelyFormRoot() {
@@ -1045,6 +1308,31 @@
     }
 
     return String(value).replace(/["\\]/g, "\\$&");
+  }
+
+  function hasExistingFieldValue(runtime) {
+    if (!runtime) return false;
+
+    if (runtime.kind === "checkbox_group" || runtime.kind === "radio_group") {
+      return (runtime.options || []).some((option) => Boolean(option?.el?.checked));
+    }
+
+    if (runtime.kind === "select") {
+      const selectedIndex = Number(runtime.el?.selectedIndex ?? -1);
+      const value = String(runtime.el?.value ?? "").trim();
+      if (!value) return selectedIndex > 0;
+      return true;
+    }
+
+    if (runtime.kind === "contenteditable") {
+      return Boolean(String(runtime.el?.textContent || "").trim());
+    }
+
+    if (runtime.kind === "file") {
+      return Boolean(runtime.el?.files?.length);
+    }
+
+    return Boolean(String(runtime.el?.value ?? "").trim());
   }
 
   async function fillOne(runtime, value) {

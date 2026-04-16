@@ -15,6 +15,14 @@ const filledCountEl = document.getElementById("filledCount");
 
 const startFillBtn = document.getElementById("startFillBtn");
 const startFillBtnText = document.getElementById("startFillBtnText");
+const startIncrementalFillBtn = document.getElementById("startIncrementalFillBtn");
+const startIncrementalFillBtnText = document.getElementById(
+  "startIncrementalFillBtnText"
+);
+const startSelectionFillBtn = document.getElementById("startSelectionFillBtn");
+const startSelectionFillBtnText = document.getElementById(
+  "startSelectionFillBtnText"
+);
 const clearMappingCacheBtn = document.getElementById("clearMappingCacheBtn");
 const fillTipEl = document.getElementById("fillTip");
 
@@ -93,6 +101,36 @@ let resumeProfile = schema.createEmptyResumeProfile();
 const collapsedResumeSections = new Set();
 let logProjectRootHandle = null;
 let activeFillSession = null;
+
+const FILL_ACTIONS = {
+  overwritePage: {
+    triggerText: "开始填充",
+    runningText: "填充中...",
+    statusText: "映射中...",
+    startLog: "开始识别页面字段，准备进行 AI 字段映射...",
+    doneLog: "填充完成",
+    fillMode: "overwrite",
+    scope: "page",
+  },
+  incrementalPage: {
+    triggerText: "增量填入",
+    runningText: "增量中...",
+    statusText: "增量映射中...",
+    startLog: "开始增量填入：已有内容的字段会自动跳过。",
+    doneLog: "增量填入完成",
+    fillMode: "incremental",
+    scope: "page",
+  },
+  selection: {
+    triggerText: "选区填入",
+    runningText: "等待选区...",
+    statusText: "等待选区...",
+    startLog: "准备选区填入：请回到网页并拖拽框选要填写的区域。",
+    doneLog: "选区填入完成",
+    fillMode: "overwrite",
+    scope: "selection",
+  },
+};
 
 document.addEventListener("DOMContentLoaded", async () => {
   initTabs();
@@ -1262,7 +1300,24 @@ function getPdfJsLib() {
 }
 
 startFillBtn.addEventListener("click", async () => {
+  await runFill("overwritePage");
+});
+
+startIncrementalFillBtn?.addEventListener("click", async () => {
+  await runFill("incrementalPage");
+});
+
+startSelectionFillBtn?.addEventListener("click", async () => {
+  await runFill("selection");
+});
+
+async function runFill(actionKey) {
   if (isFilling) return;
+
+  const actionConfig = FILL_ACTIONS[actionKey];
+  if (!actionConfig) {
+    throw new Error(`未知填充动作：${actionKey}`);
+  }
 
   if (isResumeDirty) {
     await persistResumeProfile({ silent: true });
@@ -1301,12 +1356,11 @@ startFillBtn.addEventListener("click", async () => {
   }
 
   isFilling = true;
-  startFillBtn.disabled = true;
-  startFillBtnText.textContent = "填充中...";
+  updateFillActionButtons({ isRunning: true, runningActionKey: actionKey });
   fillTipEl.hidden = true;
-  updateStatus("running", "映射中...");
+  updateStatus("running", actionConfig.statusText);
   beginFillSession(tab);
-  addLog("info", "开始识别页面字段，准备进行 AI 字段映射...");
+  addLog("info", actionConfig.startLog);
 
   try {
     const injected = await ensureContentScriptInjected(tab.id);
@@ -1319,9 +1373,21 @@ startFillBtn.addEventListener("click", async () => {
       action: "startFill",
       config,
       resumeProfile,
+      fillMode: actionConfig.fillMode,
+      scope: actionConfig.scope,
     });
 
     if (!response?.success) {
+      if (response?.canceled) {
+        addLog("info", response.message || "已取消本次操作");
+        updateStatus("ready", "已取消");
+        await finalizeFillSession({
+          status: "canceled",
+          stats: getCurrentFillStats(),
+          errorMessage: response.message || "",
+        });
+        return;
+      }
       throw new Error(response?.message || "填充失败");
     }
 
@@ -1331,14 +1397,12 @@ startFillBtn.addEventListener("click", async () => {
       response.filledCount || 0
     );
 
-    fillTipEl.textContent = response.cacheHit
-      ? "本次复用了本地字段映射缓存。"
-      : "本次已生成新的字段映射，并写入本地缓存。";
+    fillTipEl.textContent = buildFillTipText(actionKey, response.cacheHit);
     fillTipEl.hidden = false;
 
     addLog(
       "success",
-      `填充完成：识别 ${response.fieldCount} 个字段，映射 ${response.mappedCount} 个，成功填充 ${response.filledCount} 个。`
+      `${actionConfig.doneLog}：识别 ${response.fieldCount} 个字段，映射 ${response.mappedCount} 个，成功填充 ${response.filledCount} 个。`
     );
     updateStatus("ready", "完成");
     await finalizeFillSession({
@@ -1361,7 +1425,7 @@ startFillBtn.addEventListener("click", async () => {
     isFilling = false;
     updateStartFillAvailability();
   }
-});
+}
 
 clearMappingCacheBtn.addEventListener("click", async () => {
   await chrome.storage.local.remove(MAPPING_CACHE_KEY);
@@ -1378,8 +1442,58 @@ function updateFillStats(fieldCount, mappedCount, filledCount) {
 
 function updateStartFillAvailability() {
   const hasData = schema.hasAnyFilledField(resumeProfile);
-  startFillBtn.disabled = !hasData || isFilling;
-  startFillBtnText.textContent = hasData ? "开始填充" : "请先填写标准简历";
+  updateFillActionButtons({ hasData, isRunning: isFilling });
+}
+
+function updateFillActionButtons({
+  hasData = schema.hasAnyFilledField(resumeProfile),
+  isRunning = isFilling,
+  runningActionKey = "",
+} = {}) {
+  const buttonMap = [
+    {
+      key: "overwritePage",
+      button: startFillBtn,
+      labelEl: startFillBtnText,
+    },
+    {
+      key: "incrementalPage",
+      button: startIncrementalFillBtn,
+      labelEl: startIncrementalFillBtnText,
+    },
+    {
+      key: "selection",
+      button: startSelectionFillBtn,
+      labelEl: startSelectionFillBtnText,
+    },
+  ];
+
+  for (const item of buttonMap) {
+    if (!item.button || !item.labelEl) continue;
+    const config = FILL_ACTIONS[item.key];
+    const isCurrent = runningActionKey === item.key;
+    item.button.disabled = !hasData || isRunning;
+    if (!hasData) {
+      item.labelEl.textContent = "请先填写标准简历";
+    } else if (isCurrent && isRunning) {
+      item.labelEl.textContent = config.runningText;
+    } else {
+      item.labelEl.textContent = config.triggerText;
+    }
+  }
+}
+
+function buildFillTipText(actionKey, cacheHit) {
+  const modeLabel =
+    actionKey === "incrementalPage"
+      ? "增量填入"
+      : actionKey === "selection"
+        ? "选区填入"
+        : "本次填充";
+
+  return cacheHit
+    ? `${modeLabel}复用了本地字段映射缓存。`
+    : `${modeLabel}已生成新的字段映射，并写入本地缓存。`;
 }
 
 async function ensureContentScriptInjected(tabId) {
