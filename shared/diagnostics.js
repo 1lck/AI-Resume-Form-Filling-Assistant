@@ -101,6 +101,8 @@
         `name=${summarizeValue(field?.name)}`,
         `id=${summarizeValue(field?.id)}`,
         `placeholder=${summarizeValue(field?.placeholder)}`,
+        `section=${summarizeValue(field?.sectionLabel)}`,
+        `nearby=${summarizeOptions(field?.nearbyLabels)}`,
         `options=${summarizeOptions(field?.options)}`,
         `context=${summarizeValue(field?.context, { maxLength: 120 })}`,
       ].join(" ");

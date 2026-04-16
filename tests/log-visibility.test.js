@@ -18,6 +18,10 @@ test("hides verbose structured diagnostics from the side panel", () => {
     visibility.shouldRenderLogInUi("warning", '[跳过] f_8 "性别" -> personal.gender'),
     false
   );
+  assert.equal(
+    visibility.shouldRenderLogInUi("info", '[日期] f_12 "入学时间" 面板已打开 detail="year=2025 month=12 day=0"'),
+    false
+  );
 });
 
 test("keeps key process logs and failures visible in the side panel", () => {

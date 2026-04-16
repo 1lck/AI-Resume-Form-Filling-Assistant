@@ -23,6 +23,18 @@
     return;
   }
 
+  const fieldSemantics = window.ResumeFieldSemantics;
+  if (!fieldSemantics) {
+    console.error("[简历填表助手] Resume field semantics helpers not found");
+    return;
+  }
+
+  const fillRuntime = window.ResumeFillRuntime;
+  if (!fillRuntime) {
+    console.error("[简历填表助手] Resume fill runtime helpers not found");
+    return;
+  }
+
   const contentBridge = window.ResumeContentBridge;
   if (!contentBridge) {
     console.error("[简历填表助手] Resume content bridge not found");
@@ -30,9 +42,13 @@
   }
 
   const EXT_TAG = "[简历填表助手]";
-  const MAPPING_CACHE_KEY = "fieldMappingCacheV2";
+  const MAPPING_CACHE_KEY = "fieldMappingCacheV3";
   const CONTROL_SELECTOR =
     'input, textarea, select, button, option, svg, path, style, script, noscript, [contenteditable="true"], [contenteditable=""], [aria-hidden="true"]';
+  const LABEL_LIKE_SELECTOR =
+    '[class*="label"],[class*="Label"],[class*="title"],[class*="Title"],[class*="name"],[class*="Name"],[class*="caption"],[class*="Caption"],[class*="header"],[class*="Header"],label,legend,dt,th';
+  const HEADING_LIKE_SELECTOR =
+    'h1,h2,h3,h4,h5,h6,[role="heading"],[class*="section"],[class*="Section"],[class*="header"],[class*="Header"],[class*="title"],[class*="Title"],legend';
   const STRUCTURAL_CONTAINER_SELECTOR =
     '[class*="form"],[class*="Form"],[class*="field"],[class*="Field"],[class*="item"],[class*="Item"],[class*="row"],[class*="Row"],[class*="group"],[class*="Group"],[class*="cell"],[class*="Cell"],fieldset,section,article,tr,li,td,th,dl';
 
@@ -114,16 +130,23 @@
         };
       }
 
-      const cacheKey = createMappingCacheKey(scan.fields);
+      const cacheSignature = createMappingCacheSignature(scan.fields);
+      const cacheKey = createMappingCacheKeyFromSignature(cacheSignature);
       let mappings = null;
       let cacheHit = false;
 
-      const cachedEntry = await loadMappingCacheEntry(cacheKey);
+      const cacheLookup = await loadMappingCacheEntry(cacheKey, {
+        host: location.host,
+        path: location.pathname,
+        signature: cacheSignature,
+      });
+      const cachedEntry = cacheLookup.entry;
       if (cachedEntry?.mappings?.length) {
         mappings = cachedEntry.mappings;
         cacheHit = true;
         sendLog("info", "已命中本地字段映射缓存，跳过模型调用。");
       } else {
+        sendLog("info", `[缓存] 未命中 reason="${cacheLookup.reason || "未知原因"}"`);
         sendLog(
           "info",
           `已识别 ${lastFieldCount} 个字段，正在调用 AI 建立字段映射...`
@@ -139,6 +162,7 @@
           mappings,
           host: location.host,
           path: location.pathname,
+          signature: cacheSignature,
         });
 
         sendLog("success", "字段映射已生成，并已写入本地缓存。");
@@ -442,14 +466,24 @@
       if (!isFillableElement(el)) continue;
 
       const tag = el.tagName.toLowerCase();
+      const baseInputType = tag === "input"
+        ? String(el.getAttribute("type") || "text").toLowerCase()
+        : "";
+      const semanticMeta = buildFieldSemanticMeta(el, {
+        kind: tag === "textarea" ? "textarea" : tag === "select" ? "select" : "text",
+        inputType: baseInputType,
+      });
       const commonMeta = {
         required: Boolean(el.required || el.getAttribute("aria-required") === "true"),
-        context: getFieldContext(el),
+        context: semanticMeta.context,
+        sectionKey: semanticMeta.sectionKey,
+        sectionLabel: semanticMeta.sectionLabel,
+        sectionEvidence: semanticMeta.sectionEvidence,
+        nearbyLabels: semanticMeta.nearbyLabels,
       };
 
       if (tag === "select") {
         const fieldId = `f_${++idSeq}`;
-        const label = getFieldLabel(el);
         const options = Array.from(el.options || [])
           .map((opt) => String(opt.textContent || "").trim())
           .filter(Boolean)
@@ -458,7 +492,7 @@
         fields.push({
           fieldId,
           kind: "select",
-          label,
+          label: semanticMeta.label,
           name: el.getAttribute("name") || "",
           id: el.id || "",
           placeholder: "",
@@ -475,7 +509,7 @@
         fields.push({
           fieldId,
           kind: "textarea",
-          label: getFieldLabel(el),
+          label: semanticMeta.label,
           name: el.getAttribute("name") || "",
           id: el.id || "",
           placeholder: el.getAttribute("placeholder") || "",
@@ -494,7 +528,7 @@
         fields.push({
           fieldId,
           kind: "contenteditable",
-          label: getFieldLabel(el),
+          label: semanticMeta.label,
           name: el.getAttribute("name") || "",
           id: el.id || "",
           placeholder: el.getAttribute("placeholder") || "",
@@ -507,7 +541,7 @@
 
       if (tag !== "input") continue;
 
-      const type = String(el.getAttribute("type") || "text").toLowerCase();
+      const type = baseInputType;
       if (
         ["hidden", "submit", "button", "reset", "image", "range", "color"].includes(type)
       ) {
@@ -519,7 +553,7 @@
         fields.push({
           fieldId,
           kind: "file",
-          label: getFieldLabel(el),
+          label: semanticMeta.label,
           name: el.getAttribute("name") || "",
           id: el.id || "",
           placeholder: "",
@@ -537,12 +571,20 @@
         const groupMap = type === "radio" ? radioGroups : checkboxGroups;
 
         if (!groupMap.has(groupKey)) {
+          const groupMeta = buildFieldSemanticMeta(el, {
+            kind: type === "radio" ? "radio_group" : "checkbox_group",
+            inputType: type,
+          });
           groupMap.set(groupKey, {
             type,
             name,
             elements: [],
-            label: getGroupLabel(el),
-            context: getFieldContext(el),
+            label: groupMeta.label || getGroupLabel(el),
+            context: groupMeta.context,
+            sectionKey: groupMeta.sectionKey,
+            sectionLabel: groupMeta.sectionLabel,
+            sectionEvidence: groupMeta.sectionEvidence,
+            nearbyLabels: groupMeta.nearbyLabels,
           });
         }
 
@@ -555,7 +597,7 @@
         fieldId,
         kind: "text",
         inputType: type,
-        label: getFieldLabel(el),
+        label: semanticMeta.label,
         name: el.getAttribute("name") || "",
         id: el.id || "",
         placeholder: el.getAttribute("placeholder") || "",
@@ -563,7 +605,7 @@
         ...commonMeta,
       });
 
-      runtime.push({ fieldId, kind: "text", inputType: type, el });
+      runtime.push(buildTextLikeRuntime(fieldId, el, type, semanticMeta));
     }
 
     for (const group of radioGroups.values()) {
@@ -583,6 +625,10 @@
         name: group.name,
         options: options.map((item) => item.label || item.value),
         context: group.context,
+        sectionKey: group.sectionKey,
+        sectionLabel: group.sectionLabel,
+        sectionEvidence: group.sectionEvidence,
+        nearbyLabels: group.nearbyLabels,
         required: group.elements.some(
           (input) => input.required || input.getAttribute("aria-required") === "true"
         ),
@@ -616,6 +662,10 @@
         name: group.name,
         options: options.map((item) => item.label || item.value),
         context: group.context,
+        sectionKey: group.sectionKey,
+        sectionLabel: group.sectionLabel,
+        sectionEvidence: group.sectionEvidence,
+        nearbyLabels: group.nearbyLabels,
         required: group.elements.some(
           (input) => input.required || input.getAttribute("aria-required") === "true"
         ),
@@ -682,50 +732,86 @@
     }
   }
 
-  function getFieldLabel(el) {
-    const ariaLabel = el.getAttribute?.("aria-label");
-    if (ariaLabel) return normalizeText(ariaLabel);
+  function buildFieldSemanticMeta(el, { kind = "text", inputType = "" } = {}) {
+    const primaryCandidates = collectDirectFieldLabelCandidates(el);
+    const nearbyLabels = collectNearbyLabelCandidates(el).slice(0, 6);
+    const rawLabel = fieldText.selectBestFieldTextCandidate(primaryCandidates);
+    const filteredNearbyLabels = nearbyLabels.filter((item) => item !== rawLabel);
+    const section = fieldSemantics.inferSectionFromTexts([
+      rawLabel,
+      ...filteredNearbyLabels,
+      ...collectSectionTextCandidates(el),
+    ]);
 
-    const labelledBy = el.getAttribute?.("aria-labelledby");
-    if (labelledBy) {
-      const parts = labelledBy
-        .split(/\s+/g)
-        .map((id) => document.getElementById(id))
-        .filter(Boolean)
-        .map((node) => normalizeText(node.textContent || ""));
-      const joined = parts.filter(Boolean).join(" / ");
-      if (joined) return joined;
-    }
+    const label =
+      rawLabel ||
+      selectFallbackFieldLabel(filteredNearbyLabels, {
+        kind,
+        inputType,
+        sectionLabel: section.label,
+      });
 
-    const id = el.id;
-    if (id) {
-      const forLabel = document.querySelector(`label[for="${cssEscape(id)}"]`);
-      const labelText = normalizeText(forLabel?.textContent || "");
-      if (labelText) return labelText;
-    }
-
-    const wrapping = el.closest?.("label");
-    const wrappingText = normalizeText(wrapping?.textContent || "");
-    if (wrappingText) return wrappingText;
-
-    const structuralLabel = getStructuralFieldLabel(el);
-    if (structuralLabel) return structuralLabel;
-
-    const placeholder = normalizeText(el.getAttribute?.("placeholder") || "");
-    if (placeholder) return placeholder;
-
-    const name = normalizeText(el.getAttribute?.("name") || "");
-    return name;
+    return {
+      label,
+      context: getFieldContext(el, {
+        label,
+        nearbyLabels: filteredNearbyLabels,
+        sectionLabel: section.label,
+      }),
+      sectionKey: section.key || "",
+      sectionLabel: section.label || "",
+      sectionEvidence: section.evidence || "",
+      nearbyLabels: filteredNearbyLabels.slice(0, 4),
+    };
   }
 
-  function getFieldContext(el) {
+  function buildTextLikeRuntime(fieldId, el, inputType, semanticMeta) {
+    return {
+      fieldId,
+      kind: "text",
+      inputType,
+      el,
+      readOnly: Boolean(el.readOnly || el.getAttribute("aria-readonly") === "true"),
+      label: semanticMeta?.label || "",
+      placeholder: el.getAttribute("placeholder") || "",
+      context: semanticMeta?.context || "",
+      nearbyLabels: semanticMeta?.nearbyLabels || [],
+      hasCalendarIcon: Boolean(
+        el.closest?.(
+          '[class*="picker"],[class*="Picker"],[class*="calendar"],[class*="Calendar"],[class*="date"],[class*="Date"]'
+        ) || el.parentElement?.querySelector?.(".mtdicon-calendar-o,[class*='calendar']")
+      ),
+    };
+  }
+
+  function getFieldLabel(el) {
+    return buildFieldSemanticMeta(el).label;
+  }
+
+  function getFieldContext(el, { label = "", nearbyLabels = [], sectionLabel = "" } = {}) {
     const container = getStructuralContainer(el);
-    const text = getNodeTextWithoutControls(container, {
-      skipNode: el,
+    const text = getRawFieldContext(container, el);
+    if (text) {
+      return text.length > 160 ? `${text.slice(0, 157)}...` : text;
+    }
+
+    const fallbackParts = [];
+    pushUniqueMeaningfulText(fallbackParts, sectionLabel);
+    for (const item of nearbyLabels) {
+      if (item === label) continue;
+      pushUniqueMeaningfulText(fallbackParts, item);
+    }
+
+    const fallback = fallbackParts.slice(0, 3).join(" / ");
+    if (!fallback) return "";
+    return fallback.length > 160 ? `${fallback.slice(0, 157)}...` : fallback;
+  }
+
+  function getRawFieldContext(container, skipNode) {
+    return getNodeTextWithoutControls(container, {
+      skipNode,
       maxLength: 240,
     });
-    if (!text) return "";
-    return text.length > 160 ? `${text.slice(0, 157)}...` : text;
   }
 
   function getGroupLabel(input) {
@@ -761,7 +847,44 @@
     return fieldText.normalizeFieldText(text);
   }
 
-  function getStructuralFieldLabel(el) {
+  function collectDirectFieldLabelCandidates(el) {
+    const candidates = [];
+
+    pushUniqueMeaningfulText(candidates, el.getAttribute?.("aria-label"));
+
+    const labelledBy = el.getAttribute?.("aria-labelledby");
+    if (labelledBy) {
+      const parts = labelledBy
+        .split(/\s+/g)
+        .map((id) => document.getElementById(id))
+        .filter(Boolean)
+        .map((node) => normalizeText(node.textContent || ""));
+
+      for (const part of parts) {
+        pushUniqueMeaningfulText(candidates, part);
+      }
+    }
+
+    const id = el.id;
+    if (id) {
+      const forLabel = document.querySelector(`label[for="${cssEscape(id)}"]`);
+      pushUniqueMeaningfulText(candidates, forLabel?.textContent || "");
+    }
+
+    const wrapping = el.closest?.("label");
+    pushUniqueMeaningfulText(candidates, wrapping?.textContent || "");
+
+    for (const text of collectStructuralFieldLabelCandidates(el)) {
+      pushUniqueMeaningfulText(candidates, text);
+    }
+
+    pushUniqueMeaningfulText(candidates, el.getAttribute?.("placeholder") || "");
+    pushUniqueMeaningfulText(candidates, el.getAttribute?.("name") || "");
+
+    return candidates;
+  }
+
+  function collectNearbyLabelCandidates(el) {
     const candidates = [];
     const containers = collectRelevantContainers(el);
 
@@ -769,45 +892,103 @@
       for (const child of Array.from(container.children || [])) {
         if (child === el || child.contains?.(el)) continue;
 
-        const directText = getNodeTextWithoutControls(child, {
-          skipNode: el,
-          maxLength: 120,
-        });
-        if (directText) {
-          candidates.push(directText);
-        }
+        pushTextFromNode(candidates, child, { skipNode: el, maxLength: 120 });
 
-        const nestedLabelNodes = child.querySelectorAll?.(
-          '[class*="label"],[class*="Label"],[class*="title"],[class*="Title"],[class*="name"],[class*="Name"],[class*="caption"],[class*="Caption"],label,legend,dt,th'
-        );
-        for (const node of nestedLabelNodes || []) {
-          const nestedText = getNodeTextWithoutControls(node, {
-            skipNode: el,
-            maxLength: 120,
-          });
-          if (nestedText) {
-            candidates.push(nestedText);
-          }
+        const nestedNodes = child.querySelectorAll?.(LABEL_LIKE_SELECTOR);
+        for (const node of nestedNodes || []) {
+          pushTextFromNode(candidates, node, { skipNode: el, maxLength: 120 });
         }
       }
     }
 
     let current = el;
     for (let depth = 0; current && depth < 4; depth += 1) {
-      const previous = current.previousElementSibling;
-      if (previous) {
-        const previousText = getNodeTextWithoutControls(previous, {
-          skipNode: el,
-          maxLength: 120,
-        });
-        if (previousText) {
-          candidates.push(previousText);
-        }
-      }
+      pushTextFromNode(candidates, current.previousElementSibling, {
+        skipNode: el,
+        maxLength: 120,
+      });
+      pushTextFromNode(candidates, current.nextElementSibling, {
+        skipNode: el,
+        maxLength: 120,
+      });
       current = current.parentElement;
     }
 
-    return fieldText.selectBestFieldTextCandidate(candidates);
+    return candidates;
+  }
+
+  function collectStructuralFieldLabelCandidates(el) {
+    return collectNearbyLabelCandidates(el);
+  }
+
+  function collectSectionTextCandidates(el) {
+    const candidates = [];
+    let current = getStructuralContainer(el);
+    let depth = 0;
+
+    while (current && depth < 6) {
+      const headingNodes = current.querySelectorAll?.(HEADING_LIKE_SELECTOR);
+      for (const node of headingNodes || []) {
+        if (node === el || node.contains?.(el)) continue;
+        pushTextFromNode(candidates, node, { skipNode: el, maxLength: 80 });
+      }
+
+      let sibling = current.previousElementSibling;
+      let siblingDepth = 0;
+      while (sibling && siblingDepth < 3) {
+        pushTextFromNode(candidates, sibling, {
+          skipNode: el,
+          maxLength: 80,
+        });
+        const nestedNodes = sibling.querySelectorAll?.(`${HEADING_LIKE_SELECTOR},${LABEL_LIKE_SELECTOR}`);
+        for (const node of nestedNodes || []) {
+          pushTextFromNode(candidates, node, { skipNode: el, maxLength: 80 });
+        }
+        sibling = sibling.previousElementSibling;
+        siblingDepth += 1;
+      }
+
+      current = current.parentElement?.closest?.(STRUCTURAL_CONTAINER_SELECTOR) || current.parentElement;
+      depth += 1;
+    }
+
+    return candidates;
+  }
+
+  function selectFallbackFieldLabel(candidates, { kind = "text", inputType = "", sectionLabel = "" } = {}) {
+    const filtered = candidates.filter((text) => {
+      if (kind === "text" && /^(描述|补充说明|说明|内容|详情)$/.test(text)) {
+        return false;
+      }
+      return true;
+    });
+
+    const best = fieldText.selectBestFieldTextCandidate(filtered);
+    if (best) return best;
+
+    if (!sectionLabel) return "";
+    if (inputType === "url") return `${sectionLabel}链接字段`;
+    if (inputType === "date" || inputType === "month") return `${sectionLabel}时间字段`;
+    if (kind === "textarea" || kind === "contenteditable") return `${sectionLabel}描述字段`;
+    return `${sectionLabel}字段`;
+  }
+
+  function pushTextFromNode(list, node, { skipNode = null, maxLength = 120 } = {}) {
+    pushUniqueMeaningfulText(
+      list,
+      getNodeTextWithoutControls(node, {
+        skipNode,
+        maxLength,
+      })
+    );
+  }
+
+  function pushUniqueMeaningfulText(list, value) {
+    const text = normalizeText(value || "");
+    if (!fieldText.isMeaningfulFieldText(text)) return;
+    if (Array.isArray(list) && !list.includes(text)) {
+      list.push(text);
+    }
   }
 
   function collectRelevantContainers(el) {
@@ -924,7 +1105,12 @@
     const desired = prepareTextValueForRuntime(runtime, value);
     if (!desired) return { filled: false, message: "没有可填写内容" };
 
-    const ok = setValueWithEvents(runtime.el, desired);
+    if (fillRuntime.isReadonlyDateLikeRuntime(runtime)) {
+      const ok = await fillReadonlyDateRuntime(runtime, desired);
+      return ok ? { filled: true } : { filled: false, message: "日期控件写入失败" };
+    }
+
+    const ok = await setValueWithEvents(runtime.el, desired, runtime);
     return ok ? { filled: true } : { filled: false, message: "写入失败" };
   }
 
@@ -933,6 +1119,9 @@
       ? value.map((item) => String(item || "").trim()).filter(Boolean).join(", ")
       : String(value ?? "").trim();
 
+    if (!text) return "";
+
+    text = fillRuntime.normalizeValueForRuntime(runtime, text);
     if (!text) return "";
 
     if (runtime?.inputType === "date") {
@@ -962,22 +1151,274 @@
     }
   }
 
-  function setValueWithEvents(el, value) {
+  async function setValueWithEvents(el, value, runtime = null) {
     if (!el) return false;
 
     scrollIntoView(el);
+    const restoreReadonly =
+      runtime?.readOnly || el.readOnly
+        ? {
+            property: Boolean(el.readOnly),
+            attribute: el.hasAttribute("readonly"),
+          }
+        : null;
 
     try {
       el.focus?.();
+      if (restoreReadonly) {
+        el.readOnly = false;
+        el.removeAttribute("readonly");
+      }
       setNativeValue(el, value);
+      el.setAttribute("value", value);
       el.dispatchEvent(new Event("input", { bubbles: true }));
       el.dispatchEvent(new Event("change", { bubbles: true }));
       el.blur?.();
-      return true;
+      await sleep(60);
+      return fillRuntime.matchesWrittenValue(runtime, el.value, value);
     } catch (error) {
       console.warn(EXT_TAG, "写入失败", error);
       return false;
+    } finally {
+      if (restoreReadonly) {
+        el.readOnly = restoreReadonly.property;
+        if (restoreReadonly.attribute) {
+          el.setAttribute("readonly", "");
+        } else {
+          el.removeAttribute("readonly");
+        }
+      }
     }
+  }
+
+  async function fillReadonlyDateRuntime(runtime, desired) {
+    logDateFillStep(runtime, "开始", `目标值=${desired}`);
+
+    const directWriteOk = await setValueWithEvents(runtime.el, desired, runtime);
+    if (directWriteOk) {
+      logDateFillStep(runtime, "直接写入成功");
+      return true;
+    }
+
+    logDateFillStep(runtime, "直接写入失败", "尝试打开日期面板");
+
+    const trigger = runtime.el.closest?.(".mtd-input-affix-wrapper") || runtime.el;
+    clickLikeUser(trigger);
+    await sleep(120);
+
+    let panel = findVisibleDatePanel(runtime.el);
+    if (!panel) {
+      clickLikeUser(runtime.el);
+      await sleep(120);
+      panel = findVisibleDatePanel(runtime.el);
+    }
+
+    if (!panel) {
+      logDateFillStep(runtime, "打开面板失败");
+      return false;
+    }
+
+    const parsed = parseDateParts(desired);
+    if (!parsed.year || !parsed.month) {
+      logDateFillStep(runtime, "解析目标日期失败", desired);
+      return false;
+    }
+
+    logDateFillStep(
+      runtime,
+      "面板已打开",
+      `year=${parsed.year} month=${parsed.month} day=${parsed.day || 0}`
+    );
+
+    const yearReady = await movePickerToYear(panel, parsed.year);
+    if (!yearReady) {
+      logDateFillStep(runtime, "年份切换失败", String(parsed.year));
+      return false;
+    }
+
+    panel = findVisibleDatePanel(runtime.el) || panel;
+    const monthLabel = `${Number(parsed.month)}月`;
+    if (!(await clickPanelCell(panel, monthLabel))) {
+      logDateFillStep(runtime, "月份点击失败", monthLabel);
+      return false;
+    }
+
+    logDateFillStep(runtime, "月份点击成功", monthLabel);
+    await sleep(120);
+
+    if (parsed.day) {
+      panel = findVisibleDatePanel(runtime.el) || panel;
+      const dayOk = await clickPanelCell(panel, String(Number(parsed.day)));
+      if (!dayOk) {
+        logDateFillStep(runtime, "日期点击失败", String(Number(parsed.day)));
+        return false;
+      }
+      logDateFillStep(runtime, "日期点击成功", String(Number(parsed.day)));
+      await sleep(120);
+    }
+
+    const matched = fillRuntime.matchesWrittenValue(runtime, runtime.el.value, desired);
+    logDateFillStep(
+      runtime,
+      matched ? "最终校验成功" : "最终校验失败",
+      `当前值=${runtime.el.value || "(empty)"}`
+    );
+    return matched;
+  }
+
+  function logDateFillStep(runtime, step, detail = "") {
+    const label = runtime?.label || runtime?.placeholder || "(empty)";
+    const message = detail
+      ? `[日期] ${runtime?.fieldId || "(no-field-id)"} "${label}" ${step} detail="${detail}"`
+      : `[日期] ${runtime?.fieldId || "(no-field-id)"} "${label}" ${step}`;
+    sendLog("info", message);
+  }
+
+  function findVisibleDatePanel(anchorEl) {
+    const candidates = Array.from(
+      document.querySelectorAll(
+        '[class*="picker"],[class*="Picker"],[class*="calendar"],[class*="Calendar"],[role="dialog"]'
+      )
+    ).filter((node) => {
+      if (node.contains?.(anchorEl)) return false;
+      if (!isVisible(node)) return false;
+      const text = normalizeText(node.textContent || "");
+      return /\d{4}年|1月|2月|3月|4月|5月|6月|7月|8月|9月|10月|11月|12月/.test(text);
+    });
+
+    if (candidates.length === 0) return null;
+    if (!anchorEl) return candidates[0];
+
+    const anchorRect = anchorEl.getBoundingClientRect();
+    return candidates
+      .map((node) => {
+        const rect = node.getBoundingClientRect();
+        const dx = rect.left - anchorRect.left;
+        const dy = rect.top - anchorRect.bottom;
+        return {
+          node,
+          distance: Math.abs(dx) + Math.abs(dy),
+        };
+      })
+      .sort((left, right) => left.distance - right.distance)[0]?.node || candidates[0];
+  }
+
+  async function movePickerToYear(panel, targetYear) {
+    for (let attempt = 0; attempt < 24; attempt += 1) {
+      const currentYear = getVisiblePickerYear(panel);
+      if (!currentYear) return true;
+      if (currentYear === targetYear) return true;
+
+      const control = findYearNavigationControl(panel, currentYear, targetYear);
+      if (!control) return false;
+
+      clickLikeUser(control);
+      await sleep(120);
+    }
+
+    return false;
+  }
+
+  function getVisiblePickerYear(panel) {
+    const nodes = Array.from(panel.querySelectorAll("*"));
+    for (const node of nodes) {
+      const text = normalizeText(node.textContent || "");
+      const match = text.match(/^(\d{4})年$/);
+      if (match) {
+        return Number(match[1]);
+      }
+    }
+    return 0;
+  }
+
+  function findYearNavigationControl(panel, currentYear, targetYear) {
+    const buttons = Array.from(
+      panel.querySelectorAll(
+        'button,[role="button"],[tabindex],[class*="prev"],[class*="next"],[class*="arrow"],[class*="Arrow"]'
+      )
+    ).filter((node) => isVisible(node));
+
+    if (buttons.length === 0) return null;
+
+    const yearNode = Array.from(panel.querySelectorAll("*")).find((node) =>
+      /^\d{4}年$/.test(normalizeText(node.textContent || ""))
+    );
+    if (!yearNode) {
+      return targetYear < currentYear ? buttons[0] : buttons[buttons.length - 1];
+    }
+
+    const yearRect = yearNode.getBoundingClientRect();
+    const leftButtons = [];
+    const rightButtons = [];
+
+    for (const button of buttons) {
+      const rect = button.getBoundingClientRect();
+      if (rect.right <= yearRect.left) {
+        leftButtons.push({ button, rect });
+      } else if (rect.left >= yearRect.right) {
+        rightButtons.push({ button, rect });
+      }
+    }
+
+    if (targetYear < currentYear) {
+      return leftButtons.sort((a, b) => b.rect.right - a.rect.right)[0]?.button || buttons[0];
+    }
+
+    return rightButtons.sort((a, b) => a.rect.left - b.rect.left)[0]?.button || buttons[buttons.length - 1];
+  }
+
+  async function clickPanelCell(panel, text) {
+    const normalizedTarget = normalizeText(text);
+    const candidates = Array.from(
+      panel.querySelectorAll(
+        'button,[role="button"],td,li,div,span'
+      )
+    ).filter((node) => {
+      if (!isVisible(node)) return false;
+      if (node.getAttribute?.("aria-disabled") === "true") return false;
+      const className = String(node.className || "");
+      if (/disabled/i.test(className)) return false;
+      return normalizeText(node.textContent || "") === normalizedTarget;
+    });
+
+    if (candidates.length === 0) return false;
+
+    const target = candidates
+      .sort((left, right) => {
+        const leftArea = left.getBoundingClientRect().width * left.getBoundingClientRect().height;
+        const rightArea = right.getBoundingClientRect().width * right.getBoundingClientRect().height;
+        return leftArea - rightArea;
+      })[0];
+
+    clickLikeUser(target);
+    await sleep(80);
+    return true;
+  }
+
+  function clickLikeUser(el) {
+    if (!el) return;
+    scrollIntoView(el);
+    el.focus?.();
+    el.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
+    el.dispatchEvent(new MouseEvent("mouseup", { bubbles: true }));
+    el.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    if (typeof el.click === "function") {
+      el.click();
+    }
+  }
+
+  function parseDateParts(value) {
+    const text = String(value || "").trim();
+    const match = text.match(/^(\d{4})-(\d{2})(?:-(\d{2}))?$/);
+    if (!match) {
+      return { year: 0, month: 0, day: 0 };
+    }
+
+    return {
+      year: Number(match[1]),
+      month: Number(match[2]),
+      day: Number(match[3] || 0),
+    };
   }
 
   function setNativeValue(element, value) {
@@ -1215,20 +1656,68 @@
     return objCandidate || arrCandidate || text;
   }
 
-  function createMappingCacheKey(fields) {
-    const signature = fields.map((field) => ({
-      kind: field.kind,
-      label: field.label || "",
-      name: field.name || "",
-      id: field.id || "",
-      placeholder: field.placeholder || "",
-      inputType: field.inputType || "",
-      options: field.options || [],
-      context: field.context || "",
-    }));
+  function createMappingCacheSignature(fields) {
+    return fields.map((field, index) =>
+      createStableCacheFieldSignature(field, index)
+    );
+  }
 
+  function createMappingCacheKey(fields) {
+    return createMappingCacheKeyFromSignature(createMappingCacheSignature(fields));
+  }
+
+  function createMappingCacheKeyFromSignature(signature) {
     const base = `${location.origin}${location.pathname}::${JSON.stringify(signature)}`;
     return `${location.host}:${hashString(base)}`;
+  }
+
+  function createStableCacheFieldSignature(field, index = 0) {
+    return {
+      index,
+      kind: field.kind,
+      inputType: field.inputType || "",
+      required: Boolean(field.required),
+      sectionKey: normalizeCacheText(field.sectionKey || ""),
+      sectionLabel: normalizeCacheText(field.sectionLabel || ""),
+      label: normalizeCacheText(field.label || ""),
+      placeholder: normalizeCacheText(field.placeholder || ""),
+      name: normalizeCacheText(field.name || ""),
+      id: normalizeCacheText(field.id || ""),
+      options: Array.isArray(field.options)
+        ? field.options.map((item) => normalizeCacheText(item)).filter(Boolean).slice(0, 8)
+        : [],
+    };
+  }
+
+  function normalizeCacheText(value) {
+    let text = String(value || "").trim();
+    if (!text) return "";
+
+    text = text
+      .replace(/\s+/g, " ")
+      .replace(/[＊*]+\s*/g, "*")
+      .replace(/^(请填写|请选择|请输入|请完整填写)/g, "")
+      .replace(/(请填写|请选择|请输入)/g, "")
+      .replace(/[*:：]+$/g, "")
+      .trim();
+
+    if (!text) return "";
+
+    const starIndex = text.indexOf("*");
+    if (starIndex >= 0) {
+      text = text.slice(0, starIndex).trim();
+    }
+
+    const stablePrefixMatch = text.match(/^([\u4e00-\u9fa5A-Za-z]+(?:名称|时间|日期|学历|学位|专业|部门|职位|城市|邮箱|手机|电话|描述|链接|角色|学校|证书|账号|网址))/);
+    if (stablePrefixMatch) {
+      return stablePrefixMatch[1];
+    }
+
+    if (/^(全灵|实习|本科|硕士|博士|男|女|是|否|\d{4}[-/]\d{2}(?:[-/]\d{2})?)$/.test(text)) {
+      return "";
+    }
+
+    return text;
   }
 
   function hashString(text) {
@@ -1239,11 +1728,127 @@
     return (hash >>> 0).toString(16);
   }
 
-  async function loadMappingCacheEntry(cacheKey) {
+  function describeMappingCacheLookup(cache, cacheKey, meta = {}) {
+    const normalizedCache = cache && typeof cache === "object" ? cache : {};
+    const keys = Object.keys(normalizedCache);
+    const entry = normalizedCache[cacheKey] || null;
+    const shortKey = String(cacheKey || "").split(":").pop() || "(empty)";
+
+    if (entry) {
+      return {
+        entry,
+        hit: true,
+        reason: `命中 key=${shortKey} total=${keys.length}`,
+      };
+    }
+
+    if (keys.length === 0) {
+      return {
+        entry: null,
+        hit: false,
+        reason: `缓存为空 key=${shortKey}`,
+      };
+    }
+
+    const samePageEntries = Object.entries(normalizedCache)
+      .filter(([, item]) => item?.host === meta.host && item?.path === meta.path)
+      .sort((left, right) => Number(right[1]?.updatedAt || 0) - Number(left[1]?.updatedAt || 0));
+
+    if (samePageEntries.length === 0) {
+      return {
+        entry: null,
+        hit: false,
+        reason: `缓存中没有当前页面记录 key=${shortKey} total=${keys.length}`,
+      };
+    }
+
+    const latestSamePage = samePageEntries[0]?.[1] || null;
+    const difference = summarizeCacheSignatureDifference(
+      meta.signature,
+      latestSamePage?.signature
+    );
+
+    return {
+      entry: null,
+      hit: false,
+      reason: `同页面已有${samePageEntries.length}条缓存，但当前字段签名已变化 key=${shortKey} ${difference}`,
+    };
+  }
+
+  function summarizeCacheSignatureDifference(currentSignature, previousSignature) {
+    if (!Array.isArray(currentSignature) || currentSignature.length === 0) {
+      return "当前扫描签名为空";
+    }
+
+    if (!Array.isArray(previousSignature) || previousSignature.length === 0) {
+      return "历史缓存缺少签名明细";
+    }
+
+    if (currentSignature.length !== previousSignature.length) {
+      return `字段数量 ${previousSignature.length} -> ${currentSignature.length}`;
+    }
+
+    const diffs = [];
+    for (let index = 0; index < currentSignature.length; index += 1) {
+      const current = currentSignature[index];
+      const previous = previousSignature[index];
+      if (JSON.stringify(current) === JSON.stringify(previous)) {
+        continue;
+      }
+      diffs.push(describeCacheFieldDifference(previous, current, index));
+    }
+
+    if (diffs.length === 0) {
+      return "签名一致，但缓存条目不存在";
+    }
+
+    return `差异字段 ${diffs.length} 个，示例：${diffs.slice(0, 3).join("；")}`;
+  }
+
+  function describeCacheFieldDifference(previous, current, index) {
+    const changes = [];
+
+    if ((previous?.kind || "") !== (current?.kind || "")) {
+      changes.push(`kind ${previous?.kind || "(empty)"} -> ${current?.kind || "(empty)"}`);
+    }
+    if ((previous?.inputType || "") !== (current?.inputType || "")) {
+      changes.push(
+        `inputType ${previous?.inputType || "(empty)"} -> ${current?.inputType || "(empty)"}`
+      );
+    }
+    if ((previous?.sectionLabel || "") !== (current?.sectionLabel || "")) {
+      changes.push(
+        `section ${previous?.sectionLabel || "(empty)"} -> ${current?.sectionLabel || "(empty)"}`
+      );
+    }
+    if ((previous?.label || "") !== (current?.label || "")) {
+      changes.push(`label ${previous?.label || "(empty)"} -> ${current?.label || "(empty)"}`);
+    }
+    if ((previous?.placeholder || "") !== (current?.placeholder || "")) {
+      changes.push(
+        `placeholder ${previous?.placeholder || "(empty)"} -> ${current?.placeholder || "(empty)"}`
+      );
+    }
+    if ((previous?.name || "") !== (current?.name || "")) {
+      changes.push(`name ${previous?.name || "(empty)"} -> ${current?.name || "(empty)"}`);
+    }
+    if ((previous?.id || "") !== (current?.id || "")) {
+      changes.push(`id ${previous?.id || "(empty)"} -> ${current?.id || "(empty)"}`);
+    }
+
+    const previousOptions = JSON.stringify(previous?.options || []);
+    const currentOptions = JSON.stringify(current?.options || []);
+    if (previousOptions !== currentOptions) {
+      changes.push(`options ${previousOptions} -> ${currentOptions}`);
+    }
+
+    return `#${index + 1} ${changes[0] || "结构变化"}`;
+  }
+
+  async function loadMappingCacheEntry(cacheKey, meta = {}) {
     const data = await chrome.storage.local.get([MAPPING_CACHE_KEY]);
     const cache = data[MAPPING_CACHE_KEY];
-    if (!cache || typeof cache !== "object") return null;
-    return cache[cacheKey] || null;
+    return describeMappingCacheLookup(cache, cacheKey, meta);
   }
 
   async function saveMappingCacheEntry(cacheKey, entry) {

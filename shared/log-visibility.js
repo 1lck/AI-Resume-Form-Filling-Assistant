@@ -21,9 +21,11 @@
       const text = compactText(message);
       return (
         text.startsWith("[扫描]") ||
+        text.startsWith("[缓存]") ||
         text.startsWith("[映射:") ||
         text.startsWith("[取值]") ||
         text.startsWith("[跳过]") ||
+        text.startsWith("[日期]") ||
         text.startsWith("[填充:成功]")
       );
     }

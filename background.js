@@ -52,6 +52,7 @@ async function callAI(config, prompt, mode) {
 
 你将收到一个 JSON，包含：
 - fields：当前页面识别到的表单字段
+- fields 中的单个 field 可能额外带有 sectionKey、sectionLabel、sectionEvidence、nearbyLabels，用于表示扫描阶段推断出的区块和邻近标签
 - resumeFields：预先定义好的标准简历字段目录（含 path、label、sectionLabel、itemLabel、hasValue、valuePreview 等）
 
 你的任务：
@@ -62,9 +63,10 @@ async function callAI(config, prompt, mode) {
 5) 只输出 JSON（不要输出其它文本，不要 Markdown 代码块）
 
 映射原则：
-1) 优先综合 field 的 label、context、options、所在区块语义，与 resumeFields 的 label、sectionLabel、itemLabel、path、valuePreview 一起判断
+1) 优先综合 field 的 label、context、options、sectionLabel、sectionEvidence、nearbyLabels、所在区块语义，与 resumeFields 的 label、sectionLabel、itemLabel、path、valuePreview 一起判断
 2) 当多个候选语义接近时，优先选择 sectionLabel / itemLabel 更一致、且 hasValue=true 的 resumePath
 3) 对同一区块内重复出现的“起止时间”字段，通常前一个映射开始时间，后一个映射结束时间
+4) 如果 field.label 为空但 sectionLabel / nearbyLabels 不为空，必须充分利用这些扫描线索，不要把它当成完全无信息字段
 
 校招场景优先级：
 1) 含“实习”“实习经历”“实习公司”“实习岗位”等语义时，优先映射到 internships.*，不要优先映射到 workExperiences.*

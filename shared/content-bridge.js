@@ -11,7 +11,7 @@
   function () {
     "use strict";
 
-    const CONTENT_SCRIPT_VERSION = "2026-04-15-full-diagnostics-v1";
+    const CONTENT_SCRIPT_VERSION = "2026-04-16-full-diagnostics-v3";
 
     function contentScriptHasDiagnosticsSupport(status) {
       return Boolean(

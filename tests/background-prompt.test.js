@@ -15,4 +15,6 @@ test("field mapping prompt includes campus recruiting constraints", () => {
   assert.match(source, /educations\.\*/);
   assert.match(source, /没有实习经历/);
   assert.match(source, /hasValue=true/);
+  assert.match(source, /sectionLabel/);
+  assert.match(source, /nearbyLabels/);
 });

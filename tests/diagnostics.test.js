@@ -13,12 +13,16 @@ test("formatFieldSummary keeps the most useful field metadata readable", () => {
     placeholder: "请输入常用邮箱地址",
     context: "联系方式 请填写常用邮箱，后续通知会发到这里",
     options: [],
+    sectionLabel: "基本信息",
+    nearbyLabels: ["联系方式", "邮箱"],
   });
 
   assert.match(summary, /f_12/);
   assert.match(summary, /label="电子邮箱"/);
   assert.match(summary, /name="email"/);
   assert.match(summary, /placeholder="请输入常用邮箱地址"/);
+  assert.match(summary, /section="基本信息"/);
+  assert.match(summary, /nearby=\[联系方式 \| 邮箱\]/);
   assert.match(summary, /context="联系方式 请填写常用邮箱/);
 });
 

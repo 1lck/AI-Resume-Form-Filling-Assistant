@@ -74,7 +74,7 @@ if (!contentBridge) {
 const RESUME_PROFILE_KEY = "resumeProfile";
 const RESUME_SCHEMA_VERSION_KEY = "resumeSchemaVersion";
 const RESUME_IMPORT_RAW_TEXT_KEY = "resumeImportRawText";
-const MAPPING_CACHE_KEY = "fieldMappingCacheV2";
+const MAPPING_CACHE_KEY = "fieldMappingCacheV3";
 
 const BUILTIN_MODEL = {
   id: "builtin-deepseek",
@@ -1311,7 +1311,7 @@ startFillBtn.addEventListener("click", async () => {
   try {
     const injected = await ensureContentScriptInjected(tab.id);
     if (!injected) {
-      throw new Error("当前页面仍在运行旧版插件脚本，请刷新页面后重试");
+      throw new Error("当前页面仍在运行旧版插件脚本。这通常发生在刚重载扩展后；刷新当前页面一次后再重试即可");
     }
 
     const config = pickConfig(activeModel);
@@ -1429,6 +1429,8 @@ async function injectContentScript(tabId) {
         "shared/resume-schema.js",
         "shared/diagnostics.js",
         "shared/field-text.js",
+        "shared/field-semantics.js",
+        "shared/fill-runtime.js",
         "shared/content-bridge.js",
         "content.js",
       ],
@@ -1491,24 +1493,29 @@ function callAI(config, prompt, mode) {
 }
 
 function parseJsonFromAiText(text) {
-  const trimmed = String(text || "").trim();
+  const trimmed = normalizeAiJsonInput(text);
   if (!trimmed) throw new Error("AI 返回为空");
 
-  const direct = tryParseJson(trimmed);
+  const direct = tryParseJsonVariants(trimmed);
   if (direct.ok) return direct.value;
 
   const noFences = trimmed
     .replace(/```json\s*/gi, "")
     .replace(/```\s*/g, "")
     .trim();
-  const noFenceParsed = tryParseJson(noFences);
+  const noFenceParsed = tryParseJsonVariants(noFences);
   if (noFenceParsed.ok) return noFenceParsed.value;
 
-  const extracted = extractLikelyJson(noFences);
-  const extractedParsed = tryParseJson(extracted);
-  if (extractedParsed.ok) return extractedParsed.value;
+  for (const candidate of extractJsonCandidates(noFences)) {
+    const parsed = tryParseJsonVariants(candidate);
+    if (parsed.ok) return parsed.value;
+  }
 
   throw new Error("无法解析 AI 返回的 JSON");
+}
+
+function normalizeAiJsonInput(text) {
+  return String(text || "").replace(/^\uFEFF/, "").trim();
 }
 
 function tryParseJson(text) {
@@ -1517,6 +1524,37 @@ function tryParseJson(text) {
   } catch (_) {
     return { ok: false };
   }
+}
+
+function tryParseJsonVariants(text) {
+  const candidates = [String(text || "").trim(), sanitizeLikelyJson(text)];
+  const seen = new Set();
+
+  for (const candidate of candidates) {
+    const normalized = String(candidate || "").trim();
+    if (!normalized || seen.has(normalized)) continue;
+    seen.add(normalized);
+
+    const parsed = tryParseJson(normalized);
+    if (parsed.ok) return parsed;
+  }
+
+  return { ok: false };
+}
+
+function sanitizeLikelyJson(text) {
+  return String(text || "")
+    .trim()
+    .replace(/[“”]/g, '"')
+    .replace(/[‘’]/g, "'")
+    .replace(/,\s*([}\]])/g, "$1");
+}
+
+function extractJsonCandidates(text) {
+  const candidates = [extractLikelyJson(text), extractBalancedJson(text)];
+  return Array.from(
+    new Set(candidates.map((item) => String(item || "").trim()).filter(Boolean))
+  );
 }
 
 function extractLikelyJson(text) {
@@ -1538,6 +1576,66 @@ function extractLikelyJson(text) {
     return firstObj < firstArr ? objCandidate : arrCandidate;
   }
   return objCandidate || arrCandidate || text;
+}
+
+function extractBalancedJson(text) {
+  const source = String(text || "");
+  let start = -1;
+  let inString = false;
+  let isEscaped = false;
+  const stack = [];
+
+  for (let index = 0; index < source.length; index += 1) {
+    const char = source[index];
+
+    if (start === -1) {
+      if (char === "{" || char === "[") {
+        start = index;
+        stack.push(char);
+      }
+      continue;
+    }
+
+    if (inString) {
+      if (isEscaped) {
+        isEscaped = false;
+        continue;
+      }
+      if (char === "\\") {
+        isEscaped = true;
+        continue;
+      }
+      if (char === '"') {
+        inString = false;
+      }
+      continue;
+    }
+
+    if (char === '"') {
+      inString = true;
+      continue;
+    }
+
+    if (char === "{" || char === "[") {
+      stack.push(char);
+      continue;
+    }
+
+    if (char === "}" || char === "]") {
+      const last = stack[stack.length - 1];
+      const matchesPair =
+        (last === "{" && char === "}") || (last === "[" && char === "]");
+
+      if (!matchesPair) return "";
+
+      stack.pop();
+      if (stack.length === 0) {
+        return source.slice(start, index + 1);
+      }
+    }
+  }
+
+  return "";
 }
 
 function updateStatus(type, text) {
