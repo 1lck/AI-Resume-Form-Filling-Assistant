@@ -44,6 +44,27 @@
         score += 10;
       }
 
+      const labelSeparatorCount = (normalized.match(/[：:]/g) || []).length;
+      if (labelSeparatorCount >= 2) {
+        score -= 8;
+      }
+
+      if (/年\s*月\s*至\s*年\s*月/.test(normalized)) {
+        score -= 10;
+      }
+
+      if (/(姓名|邮箱|手机|学历|学习形式|性别|民族|工作时间|工作地点|工作职责|部门)[：:]/.test(normalized)) {
+        const fieldKeywordCount =
+          (
+            normalized.match(
+              /(姓名|邮箱|手机|学历|学习形式|性别|民族|工作时间|工作地点|工作职责|部门)[：:]/g
+            ) || []
+          ).length;
+        if (fieldKeywordCount >= 2) {
+          score -= 8;
+        }
+      }
+
       if (/^\+?\d[\d\s\-()]{3,}$/.test(normalized)) score -= 15;
       if (/^[\u4e00-\u9fa5a-zA-Z]+(?:\s*-\s*[\u4e00-\u9fa5a-zA-Z]+)+$/.test(normalized)) score -= 4;
       if (/(本科|硕士|博士|大专|高中|统招全日制|中国 - 居民身份证|中国大陆居民|男|女|是|否)$/.test(normalized)) {

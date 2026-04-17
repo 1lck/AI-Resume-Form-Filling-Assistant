@@ -31,3 +31,21 @@ test("selectBestFieldTextCandidate still accepts meaningful long labels", () => 
 
   assert.equal(selected, "培养方式（统招/非统招）");
 });
+
+test("selectBestFieldTextCandidate prefers a precise field label over aggregated row text", () => {
+  const selected = fieldText.selectBestFieldTextCandidate([
+    "最高学历： 学习形式：",
+    "性别：",
+  ]);
+
+  assert.equal(selected, "性别：");
+});
+
+test("selectBestFieldTextCandidate prefers a concrete field label over timeline helper text", () => {
+  const selected = fieldText.selectBestFieldTextCandidate([
+    "工作时间： 年 月 至 年 月 至今",
+    "工作地点：",
+  ]);
+
+  assert.equal(selected, "工作地点：");
+});

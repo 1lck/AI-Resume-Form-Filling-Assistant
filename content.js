@@ -1103,6 +1103,13 @@
     const wrappingText = normalizeText(wrapping?.textContent || "");
     if (wrappingText) return wrappingText;
 
+    const siblingCandidates = Array.from(input.parentElement?.children || [])
+      .filter((node) => node && node !== input)
+      .map((node) => normalizeText(node.textContent || ""))
+      .filter((text) => fieldText.isMeaningfulFieldText(text));
+    const siblingText = fieldText.selectBestFieldTextCandidate(siblingCandidates);
+    if (siblingText) return siblingText;
+
     return "";
   }
 
@@ -1136,10 +1143,6 @@
 
     const wrapping = el.closest?.("label");
     pushUniqueMeaningfulText(candidates, wrapping?.textContent || "");
-
-    for (const text of collectStructuralFieldLabelCandidates(el)) {
-      pushUniqueMeaningfulText(candidates, text);
-    }
 
     pushUniqueMeaningfulText(candidates, el.getAttribute?.("placeholder") || "");
     pushUniqueMeaningfulText(candidates, el.getAttribute?.("name") || "");
