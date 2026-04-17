@@ -328,16 +328,19 @@
   }
 
   function buildFieldMappingPayload(fields, resumeProfile) {
-    const resumeFields = schema.getCatalogWithValues(resumeProfile).map((field) => ({
-      path: field.path,
-      label: field.label,
-      sectionLabel: field.sectionLabel,
-      itemLabel: field.itemLabel || "",
-      input: field.input,
-      hasValue: field.hasValue,
-      valuePreview: field.valuePreview,
-      options: field.options || [],
-    }));
+    const resumeFields = schema
+      .getCatalogWithValues(resumeProfile)
+      .filter((field) => field.hasValue)
+      .map((field) => ({
+        path: field.path,
+        label: field.label,
+        sectionLabel: field.sectionLabel,
+        itemLabel: field.itemLabel || "",
+        input: field.input,
+        hasValue: field.hasValue,
+        valuePreview: field.valuePreview,
+        options: field.options || [],
+      }));
 
     return {
       url: location.href,
