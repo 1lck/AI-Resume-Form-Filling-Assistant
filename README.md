@@ -311,6 +311,14 @@ node --test tests/*.js
 
 这样更容易定位问题。
 
+## 📮 联系方式
+
+如果你想直接交流使用问题、反馈兼容性案例，或者讨论合作，可以扫码联系我：
+
+<p align="center">
+  <img src="dbf0e3aad4a61c39dd6d22c06c7f415a.jpg" alt="微信二维码" width="260" />
+</p>
+
 ## 📄 License
 
 [GPL-3.0](LICENSE)
