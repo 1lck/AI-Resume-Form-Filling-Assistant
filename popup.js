@@ -894,13 +894,13 @@ function createFieldControl(field, value, path) {
   } else {
     control = document.createElement("input");
     control.className = "resume-input";
-    control.type = field.input || "text";
+    control.type = field.input === "date" ? "text" : field.input || "text";
   }
 
   control.dataset.resumePath = path;
   control.value = value == null ? "" : String(value);
-  if (field.placeholder) {
-    control.placeholder = field.placeholder;
+  if (field.placeholder || field.input === "date") {
+    control.placeholder = field.placeholder || "YYYY-MM 或 YYYY-MM-DD";
   }
 
   control.addEventListener("input", markResumeDirty);

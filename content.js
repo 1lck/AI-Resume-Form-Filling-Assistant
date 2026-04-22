@@ -1405,7 +1405,18 @@
     }
 
     const ok = await setValueWithEvents(runtime.el, desired, runtime);
-    return ok ? { filled: true } : { filled: false, message: "写入失败" };
+    if (ok) {
+      return { filled: true };
+    }
+
+    for (const fallbackValue of buildTextFallbackValues(runtime, desired)) {
+      const fallbackOk = await setValueWithEvents(runtime.el, fallbackValue, runtime);
+      if (fallbackOk) {
+        return { filled: true, message: `已回退为兼容值 ${fallbackValue}` };
+      }
+    }
+
+    return { filled: false, message: "写入失败" };
   }
 
   function prepareTextValueForRuntime(runtime, value) {
@@ -1433,6 +1444,85 @@
     }
 
     return text;
+  }
+
+  function buildTextFallbackValues(runtime, desired) {
+    const text = String(desired || "").trim();
+    if (!text || !isSalaryLikeRuntime(runtime)) {
+      return [];
+    }
+
+    const fallback = getSalaryFallbackValue(runtime, text);
+    if (!fallback || fallback === text) {
+      return [];
+    }
+
+    return [fallback];
+  }
+
+  function isSalaryLikeRuntime(runtime) {
+    const text = [
+      runtime?.label,
+      runtime?.placeholder,
+      runtime?.context,
+      ...(Array.isArray(runtime?.nearbyLabels) ? runtime.nearbyLabels : []),
+    ]
+      .map((item) => String(item || ""))
+      .join(" ");
+
+    return /(薪资|薪酬|月薪|年薪|salary|compensation)/i.test(text);
+  }
+
+  function getSalaryFallbackValue(runtime, value) {
+    const parsed = parseSalaryValue(value);
+    if (!parsed.monthlyLower) {
+      return "";
+    }
+
+    const runtimeText = [
+      runtime?.label,
+      runtime?.placeholder,
+      runtime?.context,
+      ...(Array.isArray(runtime?.nearbyLabels) ? runtime.nearbyLabels : []),
+    ]
+      .map((item) => String(item || ""))
+      .join(" ");
+
+    if (/年薪|万/.test(runtimeText)) {
+      return String(Math.max(1, Math.round((parsed.monthlyLower * 12) / 10000)));
+    }
+
+    return String(parsed.monthlyLower);
+  }
+
+  function parseSalaryValue(value) {
+    const text = String(value || "")
+      .replace(/[,\s]/g, "")
+      .trim();
+    if (!text) {
+      return { monthlyLower: 0 };
+    }
+
+    const numbers = Array.from(text.matchAll(/\d+(?:\.\d+)?/g)).map((match) =>
+      Number(match[0])
+    );
+    if (numbers.length === 0) {
+      return { monthlyLower: 0 };
+    }
+
+    let multiplier = 1;
+    if (/[kK千]/.test(text)) {
+      multiplier = 1000;
+    } else if (/[wW万]/.test(text)) {
+      multiplier = 10000;
+    }
+
+    let monthlyLower = Math.round(numbers[0] * multiplier);
+    if (/年/.test(text) && !/月/.test(text)) {
+      monthlyLower = Math.round(monthlyLower / 12);
+    }
+
+    return { monthlyLower };
   }
 
   function scrollIntoView(el) {
@@ -1822,18 +1912,19 @@
   function getMatchScore(optionText, candidateText) {
     const optionVariants = expandMatchVariants(optionText);
     const candidateVariants = expandMatchVariants(candidateText);
+    let bestScore = 0;
 
     for (const optionVariant of optionVariants) {
       for (const candidateVariant of candidateVariants) {
         if (!optionVariant || !candidateVariant) continue;
         if (optionVariant === candidateVariant) return 100;
         if (optionVariant.includes(candidateVariant) || candidateVariant.includes(optionVariant)) {
-          return 75;
+          bestScore = Math.max(bestScore, 75);
         }
       }
     }
 
-    return 0;
+    return bestScore;
   }
 
   function expandMatchVariants(value) {
@@ -2231,7 +2322,7 @@
     },
     {
       key: "bachelor",
-      values: ["bachelor", "undergraduate", "本科", "学士"],
+      values: ["bachelor", "undergraduate", "本科", "学士", "大学本科"],
     },
     {
       key: "highschool",
@@ -2239,11 +2330,11 @@
     },
     {
       key: "associate",
-      values: ["associate", "大专"],
+      values: ["associate", "大专", "大学专科"],
     },
     {
       key: "master",
-      values: ["master", "masters", "硕士"],
+      values: ["master", "masters", "硕士", "硕士研究生"],
     },
     {
       key: "mba",
@@ -2251,7 +2342,7 @@
     },
     {
       key: "phd",
-      values: ["phd", "doctorate", "博士"],
+      values: ["phd", "doctorate", "博士", "博士研究生", "博士后"],
     },
     {
       key: "single",
@@ -2296,6 +2387,35 @@
     {
       key: "idcard",
       values: ["identitycard", "idcard", "身份证"],
+    },
+    {
+      key: "regularfulltime",
+      values: [
+        "regularfulltime",
+        "fulltimedegree",
+        "统招",
+        "统招全日制",
+        "全日制",
+        "全国普通高等院校全日制",
+      ],
+    },
+    {
+      key: "nonfulltime",
+      values: [
+        "nonfulltime",
+        "parttimedegree",
+        "非统招",
+        "非全日制",
+        "全国普通高等院校非全日制",
+      ],
+    },
+    {
+      key: "jointtraining",
+      values: ["jointtraining", "jointprogram", "联合培养"],
+    },
+    {
+      key: "commissionedtraining",
+      values: ["commissionedtraining", "委托培养"],
     },
     {
       key: "passport",

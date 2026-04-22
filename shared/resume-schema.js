@@ -35,8 +35,17 @@
     { values: ["身份证", "identitycard", "idcard"] },
     { values: ["护照", "passport"] },
     { values: ["居留许可", "residencepermit"] },
+    { values: ["大学专科", "associate"] },
+    { values: ["大学本科", "bachelor", "undergraduate"] },
+    { values: ["硕士研究生", "master", "masters"] },
+    { values: ["博士研究生", "phd", "doctorate"] },
+    { values: ["博士后", "phd", "doctorate"] },
     { values: ["统招全日制", "regularfulltime", "fulltimedegree"] },
+    { values: ["全日制", "regularfulltime", "fulltimedegree"] },
+    { values: ["全国普通高等院校全日制", "regularfulltime", "fulltimedegree"] },
     { values: ["非统招", "非全日制", "parttimedegree", "nonfulltime"] },
+    { values: ["全国普通高等院校非全日制", "parttimedegree", "nonfulltime"] },
+    { values: ["统招", "regularfulltime", "fulltimedegree"] },
     { values: ["海外留学", "overseasstudy", "studyabroad"] },
     { values: ["联合培养", "jointprogram", "jointtraining"] },
     { values: ["委托培养", "commissionedtraining"] },
@@ -442,6 +451,54 @@
     },
   ];
 
+  const FIELD_VALUE_ALIASES = {
+    personal: {
+      birthDate: ["birthday", "birth", "dob", "birthMonth", "birthYearMonth", "出生年月"],
+    },
+    contactAndLocation: {
+      hometownCity: ["hometown", "nativePlace", "birthPlace", "籍贯"],
+      hometownProvince: ["hometown", "nativePlace", "birthPlace", "籍贯"],
+    },
+    identityAndAuthorization: {
+      personalIdNumber: ["idNumber", "idCardNumber", "identityCardNumber", "certificateNum", "身份证号"],
+      personalIdType: ["idType", "certificateType"],
+    },
+    jobPreferences: {
+      expectedSalary: ["expectedMonthlySalary", "expectedMonthSalary", "monthlySalary", "salaryExpectation", "期望月薪"],
+    },
+    educations: {
+      educationType: ["educationCategory", "educationNature", "学历类型"],
+      studyMode: ["learningModality", "learningMode", "培养方式", "学习形式"],
+      faculty: ["college", "institute", "instituteName", "院系名称"],
+      academicSystem: ["schoolSystem", "学制"],
+      researchDirection: ["researchDire", "direction", "研究方向"],
+      advisor: ["tutor", "mentor", "导师"],
+      laboratory: ["lab", "laboratoryName", "library", "所在实验室"],
+      studentId: ["stuNo", "studentNo", "schoolNumber", "学号"],
+      degree: ["educationCode", "educationLevel", "学历"],
+      startDate: ["start", "beginDate", "beginTime", "startTime", "入学时间"],
+      endDate: ["end", "finishDate", "finishTime", "endTime", "graduationDate", "graduateDate", "毕业时间"],
+    },
+    internships: {
+      startDate: ["start", "beginDate", "beginTime", "startTime"],
+      endDate: ["end", "finishDate", "finishTime", "endTime"],
+    },
+    workExperiences: {
+      startDate: ["start", "beginDate", "beginTime", "startTime"],
+      endDate: ["end", "finishDate", "finishTime", "endTime"],
+    },
+    projects: {
+      startDate: ["start", "beginDate", "beginTime", "startTime"],
+      endDate: ["end", "finishDate", "finishTime", "endTime"],
+    },
+    campusExperiences: {
+      startDate: ["start", "beginDate", "beginTime", "startTime"],
+      endDate: ["end", "finishDate", "finishTime", "endTime"],
+    },
+  };
+
+  const DATE_RANGE_SOURCE_KEYS = ["dateRange", "timeRange", "duration", "period", "dates"];
+
   function buildEmptyObjectFromFields(fields) {
     const out = {};
     for (const field of fields) {
@@ -548,6 +605,10 @@
       return normalizeSelectValue(field.options || [], value);
     }
 
+    if (field?.input === "date") {
+      return normalizeDateValue(value);
+    }
+
     if (value == null) return "";
 
     if (typeof value === "string") {
@@ -571,6 +632,40 @@
     }
 
     return String(value).trim();
+  }
+
+  function normalizeDateValue(value) {
+    const text = String(value || "").trim();
+    if (!text) return "";
+
+    const normalized = text
+      .replace(/\s+/g, "")
+      .replace(/[/.]/g, "-")
+      .replace(/年/g, "-")
+      .replace(/月/g, "-")
+      .replace(/日/g, "")
+      .replace(/-+/g, "-")
+      .replace(/^-|-$/g, "");
+
+    let match = normalized.match(/^(\d{4})-(\d{1,2})(?:-(\d{1,2}))?$/);
+    if (match) {
+      const year = match[1];
+      const month = match[2].padStart(2, "0");
+      const day = match[3] ? match[3].padStart(2, "0") : "";
+      return day ? `${year}-${month}-${day}` : `${year}-${month}`;
+    }
+
+    match = normalized.match(/^(\d{4})(\d{2})(\d{2})$/);
+    if (match) {
+      return `${match[1]}-${match[2]}-${match[3]}`;
+    }
+
+    match = normalized.match(/^(\d{4})(\d{2})$/);
+    if (match) {
+      return `${match[1]}-${match[2]}`;
+    }
+
+    return text;
   }
 
   function normalizeSelectValue(options, value) {
@@ -620,6 +715,82 @@
     return Array.from(variants);
   }
 
+  function hasRawValue(value) {
+    return !(value == null || value === "");
+  }
+
+  function getFieldAliases(sectionKey, fieldKey) {
+    return FIELD_VALUE_ALIASES[sectionKey]?.[fieldKey] || [];
+  }
+
+  function extractDateRangeValue(rawSource, fieldKey) {
+    if (fieldKey !== "startDate" && fieldKey !== "endDate") {
+      return "";
+    }
+
+    for (const sourceKey of DATE_RANGE_SOURCE_KEYS) {
+      const rawValue = rawSource?.[sourceKey];
+      if (!hasRawValue(rawValue)) continue;
+
+      const matches = String(rawValue)
+        .match(/\d{4}(?:[-./年]\d{1,2})?(?:[-./月]\d{1,2}日?)?/g)
+        ?.map((item) => normalizeDateValue(item))
+        .filter(Boolean);
+
+      if (!matches?.length) continue;
+      if (fieldKey === "startDate") return matches[0] || "";
+      return matches[1] || matches[0] || "";
+    }
+
+    return "";
+  }
+
+  function pickRawFieldValue(rawSource, sectionKey, fieldKey) {
+    if (!rawSource || typeof rawSource !== "object") return "";
+
+    if (hasRawValue(rawSource[fieldKey])) {
+      return rawSource[fieldKey];
+    }
+
+    for (const alias of getFieldAliases(sectionKey, fieldKey)) {
+      if (hasRawValue(rawSource[alias])) {
+        return rawSource[alias];
+      }
+    }
+
+    return extractDateRangeValue(rawSource, fieldKey);
+  }
+
+  function extractBirthDateFromPersonalId(idNumber) {
+    const normalized = String(idNumber || "").trim().toUpperCase();
+    let match = normalized.match(/^(\d{6})(\d{4})(\d{2})(\d{2})(\d{3}[\dX])$/);
+    if (match) {
+      return `${match[2]}-${match[3]}-${match[4]}`;
+    }
+
+    match = normalized.match(/^(\d{6})(\d{2})(\d{2})(\d{2})(\d{3})$/);
+    if (match) {
+      return `19${match[2]}-${match[3]}-${match[4]}`;
+    }
+
+    return "";
+  }
+
+  function applyDerivedProfileValues(profile) {
+    if (!profile.personal.birthDate) {
+      profile.personal.birthDate = extractBirthDateFromPersonalId(
+        profile.identityAndAuthorization.personalIdNumber
+      );
+    }
+
+    if (
+      !profile.identityAndAuthorization.personalIdType &&
+      profile.identityAndAuthorization.personalIdNumber
+    ) {
+      profile.identityAndAuthorization.personalIdType = "身份证";
+    }
+  }
+
   function normalizeResumeProfile(input) {
     const source = input && typeof input === "object" ? input : {};
     const profile = createEmptyResumeProfile();
@@ -632,7 +803,7 @@
             : {};
 
         for (const field of section.fields) {
-          const rawValue = rawGroup[field.key];
+          const rawValue = pickRawFieldValue(rawGroup, section.key, field.key);
           if (rawValue == null || rawValue === "") continue;
           profile[section.key][field.key] = normalizeFieldValue(field, rawValue);
         }
@@ -667,7 +838,7 @@
         const normalizedItem = createEmptyListItem(section.key);
 
         for (const field of section.fields) {
-          const rawValue = rawItem[field.key];
+          const rawValue = pickRawFieldValue(rawItem, section.key, field.key);
           if (rawValue == null || rawValue === "") continue;
           normalizedItem[field.key] = normalizeFieldValue(field, rawValue);
         }
@@ -676,6 +847,7 @@
       }
     }
 
+    applyDerivedProfileValues(profile);
     return profile;
   }
 

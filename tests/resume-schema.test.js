@@ -90,3 +90,38 @@ test("resume schema normalizes campus recruiting resume data", () => {
   assert.equal(normalized.campusExperiences[0].category, "学生组织");
   assert.equal(normalized.campusExperiences[0].isCurrent, "是");
 });
+
+test("resume schema preserves flexible date precision and legacy aliases", () => {
+  const schema = loadResumeSchema();
+  const normalized = schema.normalizeResumeProfile({
+    personal: {
+      birthYearMonth: "2001/06",
+    },
+    contactAndLocation: {
+      nativePlace: "江西南昌",
+    },
+    identityAndAuthorization: {
+      idCardNumber: "362202200106265976",
+    },
+    educations: [
+      {
+        learningModality: "全国普通高等院校全日制",
+        schoolSystem: "2年及以上",
+        timeRange: "2021年09月 至 2025年06月",
+      },
+    ],
+  });
+
+  assert.equal(normalized.personal.birthDate, "2001-06");
+  assert.equal(normalized.contactAndLocation.hometownCity, "江西南昌");
+  assert.equal(normalized.contactAndLocation.hometownProvince, "江西南昌");
+  assert.equal(
+    normalized.identityAndAuthorization.personalIdNumber,
+    "362202200106265976"
+  );
+  assert.equal(normalized.identityAndAuthorization.personalIdType, "身份证");
+  assert.equal(normalized.educations[0].studyMode, "统招");
+  assert.equal(normalized.educations[0].academicSystem, "2年及以上");
+  assert.equal(normalized.educations[0].startDate, "2021-09");
+  assert.equal(normalized.educations[0].endDate, "2025-06");
+});
