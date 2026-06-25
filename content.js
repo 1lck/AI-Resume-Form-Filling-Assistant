@@ -1,4 +1,4 @@
-// Content script: scan fields -> AI mapping to resume paths -> deterministic local fill.
+﻿// Content script: scan fields -> AI mapping to resume paths -> deterministic local fill.
 (function () {
   "use strict";
 
@@ -127,13 +127,18 @@
   }
 
   function getElementFingerprint(el) {
-    return `${el.tagName}:${el.className}:${normalizeDeepScanText(el.textContent || "")}`;
+    return `${el.tagName}:${el.id || ""}:${normalizeDeepScanText(el.textContent || "")}`;
   }
 
   function isExpandTrigger(el) {
     const text = normalizeDeepScanText(el.textContent || "");
     const ariaLabel = normalizeDeepScanText(el.getAttribute("aria-label") || "");
     const className = String(el.className || "").toLowerCase();
+
+    // 排除下拉选择框、日期选择器等复合组件
+    if (el.getAttribute("role") === "combobox") return false;
+    if (el.getAttribute("aria-haspopup") === "listbox") return false;
+    if (el.getAttribute("aria-haspopup") === "dialog") return false;
 
     // 排除包含否定关键词的按钮
     const combined = `${text} ${ariaLabel}`;
@@ -183,6 +188,7 @@
     for (const el of elements) {
       if (!isVisible(el)) continue;
       if (el.disabled || el.getAttribute("aria-disabled") === "true") continue;
+      if (el.dataset.deepScanned === "true") continue;
 
       const fp = getElementFingerprint(el);
       if (fingerprints.has(fp)) continue;
@@ -230,6 +236,7 @@
       for (const btn of buttons) {
         scrollIntoView(btn);
         clickLikeUser(btn);
+        btn.dataset.deepScanned = "true";
         totalClicked++;
 
         const countFields = () => collectControls(document).length;
@@ -1133,7 +1140,13 @@
     const selectors =
       'input, textarea, select, [contenteditable="true"], [contenteditable=""]';
 
-    return Array.from(scope.querySelectorAll(selectors)).filter((el) => isVisible(el));
+    return Array.from(scope.querySelectorAll(selectors)).filter((el) => {
+      if (!isVisible(el)) return false;
+      // 排除 Ant Design 等 UI 框架的只读搜索输入框（Select / DatePicker 内部组件）
+      if (el.readonly && el.getAttribute("role") === "combobox") return false;
+      if (el.readonly && el.getAttribute("aria-haspopup") === "listbox") return false;
+      return true;
+    });
   }
 
   function isFillableElement(el) {
