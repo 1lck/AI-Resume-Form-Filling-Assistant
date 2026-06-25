@@ -72,6 +72,38 @@
     "submit", "save", "delete", "back", "cancel", "close",
   ];
 
+  // 按钮文本 → 简历章节关键词映射
+  const DEEP_SCAN_SECTION_MAP = [
+    { patterns: ["教育", "学校", "专业", "学历", "学位", "毕业"], sectionKey: "educations" },
+    { patterns: ["实习"], sectionKey: "internships" },
+    { patterns: ["工作", "公司", "职位", "任职", "职业"], sectionKey: "workExperiences" },
+    { patterns: ["项目", "产品"], sectionKey: "projects" },
+    { patterns: ["证书", "认证", "资格", "等级"], sectionKey: "certificates" },
+    { patterns: ["语言", "外语", "雅思", "托福", "cet"], sectionKey: "languages" },
+    { patterns: ["校园", "学生", "社团", "社会", "志愿", "科研", "组织"], sectionKey: "campusExperiences" },
+    { patterns: ["技能", "特长", "编程", "工具"], sectionKey: "skills" },
+    { patterns: ["花名", "昵称", "别名", "英文名", "曾用名"], sectionKey: "personal" },
+    { patterns: ["作品", "作品集", "博客", "github", "主页", "链接", "在线"], sectionKey: "onlinePresence" },
+    { patterns: ["偏好", "期望", "求职", "目标", "薪资"], sectionKey: "jobPreferences" },
+    { patterns: ["联系方式", "地址", "电话"], sectionKey: "contactAndLocation" },
+    { patterns: ["证件", "身份", "护照", "户口"], sectionKey: "identityAndAuthorization" },
+    { patterns: ["奖项", "荣誉", "获奖", "论文", "专利", "开源", "推荐人"], sectionKey: "additional" },
+    { patterns: ["补充", "其他", "备注", "说明"], sectionKey: "additional" },
+  ];
+
+  function hasSectionContent(profile, sectionKey) {
+    const section = profile[sectionKey];
+    if (!section) return false;
+    if (typeof section !== "object") return String(section || "").trim().length > 0;
+    if (Array.isArray(section)) {
+      return section.some((item) => {
+        if (!item || typeof item !== "object") return false;
+        return Object.values(item).some((v) => String(v || "").trim().length > 0);
+      });
+    }
+    return Object.values(section).some((v) => String(v || "").trim().length > 0);
+  }
+
   const fieldRuntimeMap = new Map();
 
   let lastFieldCount = 0;
@@ -220,12 +252,33 @@
     return false;
   }
 
-  async function triggerExpandableSections() {
+  async function triggerExpandableSections(resumeProfile) {
     const fingerprints = new Set();
     let totalClicked = 0;
 
     for (let round = 0; round < DEEP_SCAN_MAX_ROUNDS; round++) {
-      const buttons = findExpandButtons(fingerprints);
+      // 根据简历内容过滤展开按钮：只点击有对应数据的章节
+      let buttons = findExpandButtons(fingerprints);
+      if (resumeProfile && buttons.length > 0) {
+        const relevantSections = new Set();
+        for (const entry of DEEP_SCAN_SECTION_MAP) {
+          if (hasSectionContent(resumeProfile, entry.sectionKey)) {
+            relevantSections.add(entry.sectionKey);
+          }
+        }
+        if (relevantSections.size > 0) {
+          buttons = buttons.filter((btn) => {
+            const text = normalizeDeepScanText(btn.textContent || '');
+            // 检查按钮文字是否匹配某个已知章节
+            const matched = DEEP_SCAN_SECTION_MAP.filter((entry) =>
+              entry.patterns.some((p) => text.includes(normalizeDeepScanText(p)))
+            );
+            if (matched.length === 0) return true; // 未匹配到任何章节，保留
+            // 至少有一个匹配的章节有内容才保留
+            return matched.some((m) => relevantSections.has(m.sectionKey));
+          });
+        }
+      }
       if (buttons.length === 0) break;
 
       sendLog(
@@ -294,7 +347,7 @@
       // 深度扫描阶段：自动发现并展开可折叠区块（仅整页模式）
       if (scope === "page") {
         sendLog("info", "正在探索页面上的可展开区块...");
-        await triggerExpandableSections();
+        await triggerExpandableSections(resumeProfile);
       }
 
       sendLog(
