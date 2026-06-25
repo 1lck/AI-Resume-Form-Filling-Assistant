@@ -56,6 +56,22 @@
   const SELECTION_HINT_ID = "ai-resume-fill-selection-hint";
   const MIN_SELECTION_SIZE = 12;
 
+  // 深度扫描：自动展开可折叠区块
+  const DEEP_SCAN_MAX_ROUNDS = 5;
+  const DEEP_SCAN_AFTER_CLICK_DELAY = 500;
+  const DEEP_SCAN_POLL_TIMEOUT = 3000;
+  const DEEP_SCAN_POLL_INTERVAL = 200;
+
+  const DEEP_SCAN_EXPAND_KEYWORDS = [
+    "添加", "新增", "增加", "展开", "更多", "全部",
+    "add", "expand", "more", "plus",
+  ];
+  const DEEP_SCAN_EXPAND_CLASS_KEYWORDS = ["add", "expand", "more", "plus"];
+  const DEEP_SCAN_EXCLUDE_KEYWORDS = [
+    "提交", "保存", "删除", "返回", "取消", "关闭",
+    "submit", "save", "delete", "back", "cancel", "close",
+  ];
+
   const fieldRuntimeMap = new Map();
 
   let lastFieldCount = 0;
@@ -100,6 +116,140 @@
     }
   });
 
+  // --- 深度扫描：自动展开动态区块 ---
+
+  function normalizeDeepScanText(value) {
+    return String(value || "")
+      .toLowerCase()
+      .replace(/\s+/g, "")
+      .replace(/[＊*]+$/g, "")
+      .trim();
+  }
+
+  function getElementFingerprint(el) {
+    return `${el.tagName}:${el.className}:${normalizeDeepScanText(el.textContent || "")}`;
+  }
+
+  function isExpandTrigger(el) {
+    const text = normalizeDeepScanText(el.textContent || "");
+    const ariaLabel = normalizeDeepScanText(el.getAttribute("aria-label") || "");
+    const className = String(el.className || "").toLowerCase();
+
+    // 排除包含否定关键词的按钮
+    const combined = `${text} ${ariaLabel}`;
+    if (DEEP_SCAN_EXCLUDE_KEYWORDS.some((kw) => combined.includes(kw))) {
+      return false;
+    }
+
+    // 规则 1：文本含展开关键词
+    if (DEEP_SCAN_EXPAND_KEYWORDS.some((kw) => text.includes(kw) || ariaLabel.includes(kw))) {
+      return true;
+    }
+
+    // 规则 2：类名含展开关键词，且文本较短（可能是图标按钮或 "+"）
+    if (
+      DEEP_SCAN_EXPAND_CLASS_KEYWORDS.some((kw) => className.includes(kw)) &&
+      text.length <= 5
+    ) {
+      return true;
+    }
+
+    // 规则 3：文本以 + 开头或仅为 +
+    if (/^\+/.test(text) || text === "+") {
+      return true;
+    }
+
+    return false;
+  }
+
+  function findExpandButtons(fingerprints) {
+    const selectors = [
+      'button:not([type="submit"])',
+      '[role="button"]',
+      'a[class*="add"]',
+      'a[class*="Add"]',
+      'a[class*="expand"]',
+      'a[class*="Expand"]',
+      'a[class*="more"]',
+      'a[class*="More"]',
+      '[data-action*="add"]',
+      '[data-action*="Add"]',
+      '[data-action*="new"]',
+    ];
+
+    const elements = document.querySelectorAll(selectors.join(","));
+    const candidates = [];
+
+    for (const el of elements) {
+      if (!isVisible(el)) continue;
+      if (el.disabled || el.getAttribute("aria-disabled") === "true") continue;
+
+      const fp = getElementFingerprint(el);
+      if (fingerprints.has(fp)) continue;
+
+      if (isExpandTrigger(el)) {
+        fingerprints.add(fp);
+        candidates.push(el);
+      }
+    }
+
+    return candidates;
+  }
+
+  async function waitForNewFields(getCurrentControlCount) {
+    const startCount = getCurrentControlCount();
+    const startTime = Date.now();
+
+    await sleep(DEEP_SCAN_AFTER_CLICK_DELAY);
+
+    while (Date.now() - startTime < DEEP_SCAN_POLL_TIMEOUT) {
+      const currentCount = getCurrentControlCount();
+      if (currentCount > startCount) {
+        await sleep(300);
+        return true;
+      }
+      await sleep(DEEP_SCAN_POLL_INTERVAL);
+    }
+
+    return false;
+  }
+
+  async function triggerExpandableSections() {
+    const fingerprints = new Set();
+    let totalClicked = 0;
+
+    for (let round = 0; round < DEEP_SCAN_MAX_ROUNDS; round++) {
+      const buttons = findExpandButtons(fingerprints);
+      if (buttons.length === 0) break;
+
+      sendLog(
+        "info",
+        `深度扫描第 ${round + 1} 轮：发现 ${buttons.length} 个可展开区块`
+      );
+
+      for (const btn of buttons) {
+        scrollIntoView(btn);
+        clickLikeUser(btn);
+        totalClicked++;
+
+        const countFields = () => collectControls(document).length;
+        const hasNew = await waitForNewFields(countFields);
+
+        if (hasNew) {
+          sendLog("info", `已触发第 ${totalClicked} 个展开按钮，检测到新字段`);
+        }
+      }
+    }
+
+    if (totalClicked > 0) {
+      sendLog("success", `深度扫描完成：共触发 ${totalClicked} 个展开按钮`);
+    }
+
+    return totalClicked;
+  }
+
+  // --- 深度扫描结束 ---
+
   async function handleStartFill(config, resumeProfile, request = {}) {
     if (isWorking) {
       return { success: false, message: "正在执行中，请稍后再试" };
@@ -132,6 +282,12 @@
             selectionRect.top
           )} width=${Math.round(selectionRect.width)} height=${Math.round(selectionRect.height)}`
         );
+      }
+
+      // 深度扫描阶段：自动发现并展开可折叠区块（仅整页模式）
+      if (scope === "page") {
+        sendLog("info", "正在探索页面上的可展开区块...");
+        await triggerExpandableSections();
       }
 
       sendLog(
