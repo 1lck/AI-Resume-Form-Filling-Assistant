@@ -2,6 +2,7 @@ const resumeNavEl = document.getElementById("resumeNav");
 const resumeFormHost = document.getElementById("resumeFormHost");
 const saveResumeBtn = document.getElementById("saveResumeBtn");
 const reloadResumeBtn = document.getElementById("reloadResumeBtn");
+const resetResumeBtn = document.getElementById("resetResumeBtn");
 const resumeImportTextEl = document.getElementById("resumeImportText");
 const importResumeBtn = document.getElementById("importResumeBtn");
 const uploadPdfBtn = document.getElementById("uploadPdfBtn");
@@ -16,6 +17,13 @@ if (!schema) {
 const RESUME_PROFILE_KEY = "resumeProfile";
 const RESUME_SCHEMA_VERSION_KEY = "resumeSchemaVersion";
 const RESUME_IMPORT_RAW_TEXT_KEY = "resumeImportRawText";
+const RESUME_STORAGE_KEYS = [
+  RESUME_PROFILE_KEY,
+  RESUME_SCHEMA_VERSION_KEY,
+  RESUME_IMPORT_RAW_TEXT_KEY,
+  "resumeStructured",
+  "resumeRawText",
+];
 
 const BUILTIN_MODEL = {
   id: "builtin-deepseek",
@@ -28,6 +36,7 @@ const BUILTIN_MODEL = {
 
 let isImporting = false;
 let isResumeDirty = false;
+let isResettingResume = false;
 let resumeProfile = schema.createEmptyResumeProfile();
 const collapsedResumeSections = new Set();
 
@@ -48,7 +57,7 @@ chrome.storage.onChanged.addListener((changes, areaName) => {
     return;
   }
 
-  if (isResumeDirty || isImporting) {
+  if (isResumeDirty || isImporting || isResettingResume) {
     return;
   }
 
@@ -585,6 +594,34 @@ saveResumeBtn.addEventListener("click", async () => {
 reloadResumeBtn.addEventListener("click", async () => {
   await loadResumeProfile();
   updatePageStatus("info", "已从扩展存储重新加载标准简历。");
+});
+
+resetResumeBtn.addEventListener("click", async () => {
+  const confirmed = confirm(
+    "确定要完全重置简历吗？\n\n这会永久删除已保存的标准简历和原始导入文本，且无法撤销。模型和 API 配置不会被删除。"
+  );
+  if (!confirmed) return;
+
+  isResettingResume = true;
+  resetResumeBtn.disabled = true;
+  updatePageStatus("warning", "正在重置简历...");
+
+  try {
+    await chrome.storage.sync.remove(RESUME_STORAGE_KEYS);
+    resumeProfile = schema.createEmptyResumeProfile();
+    resumeImportTextEl.value = "";
+    resetCollapsedResumeSections();
+    renderResumeEditor(resumeProfile);
+    isResumeDirty = false;
+    saveResumeBtn.disabled = true;
+    updatePageStatus("success", "简历已完全重置，模型和 API 配置保持不变。");
+  } catch (error) {
+    console.error("[resume-editor] 重置简历失败:", error);
+    updatePageStatus("error", `重置失败：${error.message}`);
+  } finally {
+    isResettingResume = false;
+    resetResumeBtn.disabled = false;
+  }
 });
 
 importResumeBtn.addEventListener("click", async () => {

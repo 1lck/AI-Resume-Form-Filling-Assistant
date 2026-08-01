@@ -67,6 +67,17 @@ body.resume-editor-page {
   flex-shrink: 0;
 }
 
+.btn-danger-outline {
+  background: #ffffff;
+  color: #b91c1c;
+  border-color: #fecaca;
+}
+
+.btn-danger-outline:hover:not(:disabled) {
+  background: #fef2f2;
+  border-color: var(--danger);
+}
+
 /* ─── Status Bar ─────────────────────────────────────────────────────────── */
 #pageStatus {
   padding: 11px 16px;
