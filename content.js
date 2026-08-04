@@ -1,4 +1,4 @@
-// Content script: scan fields -> AI mapping to resume paths -> deterministic local fill.
+﻿// Content script: scan fields -> AI mapping to resume paths -> deterministic local fill.
 (function () {
   "use strict";
 
@@ -56,6 +56,54 @@
   const SELECTION_HINT_ID = "ai-resume-fill-selection-hint";
   const MIN_SELECTION_SIZE = 12;
 
+  // 深度扫描：自动展开可折叠区块
+  const DEEP_SCAN_MAX_ROUNDS = 5;
+  const DEEP_SCAN_AFTER_CLICK_DELAY = 500;
+  const DEEP_SCAN_POLL_TIMEOUT = 3000;
+  const DEEP_SCAN_POLL_INTERVAL = 200;
+
+  const DEEP_SCAN_EXPAND_KEYWORDS = [
+    "添加", "新增", "增加", "展开", "更多", "全部",
+    "add", "expand", "more", "plus",
+  ];
+  const DEEP_SCAN_EXPAND_CLASS_KEYWORDS = ["add", "expand", "more", "plus"];
+  const DEEP_SCAN_EXCLUDE_KEYWORDS = [
+    "提交", "保存", "删除", "返回", "取消", "关闭",
+    "submit", "save", "delete", "back", "cancel", "close",
+  ];
+
+  // 按钮文本 → 简历章节关键词映射
+  const DEEP_SCAN_SECTION_MAP = [
+    { patterns: ["教育", "学校", "专业", "学历", "学位", "毕业"], sectionKey: "educations" },
+    { patterns: ["实习"], sectionKey: "internships" },
+    { patterns: ["工作", "公司", "职位", "任职", "职业"], sectionKey: "workExperiences" },
+    { patterns: ["项目", "产品"], sectionKey: "projects" },
+    { patterns: ["证书", "认证", "资格", "等级"], sectionKey: "certificates" },
+    { patterns: ["语言", "外语", "雅思", "托福", "cet"], sectionKey: "languages" },
+    { patterns: ["校园", "学生", "社团", "社会", "志愿", "科研", "组织"], sectionKey: "campusExperiences" },
+    { patterns: ["技能", "特长", "编程", "工具"], sectionKey: "skills" },
+    { patterns: ["花名", "昵称", "别名", "英文名", "曾用名"], sectionKey: "personal" },
+    { patterns: ["作品", "作品集", "博客", "github", "主页", "链接", "在线"], sectionKey: "onlinePresence" },
+    { patterns: ["偏好", "期望", "求职", "目标", "薪资"], sectionKey: "jobPreferences" },
+    { patterns: ["联系方式", "地址", "电话"], sectionKey: "contactAndLocation" },
+    { patterns: ["证件", "身份", "护照", "户口"], sectionKey: "identityAndAuthorization" },
+    { patterns: ["奖项", "荣誉", "获奖", "论文", "专利", "开源", "推荐人"], sectionKey: "additional" },
+    { patterns: ["补充", "其他", "备注", "说明"], sectionKey: "additional" },
+  ];
+
+  function hasSectionContent(profile, sectionKey) {
+    const section = profile[sectionKey];
+    if (!section) return false;
+    if (typeof section !== "object") return String(section || "").trim().length > 0;
+    if (Array.isArray(section)) {
+      return section.some((item) => {
+        if (!item || typeof item !== "object") return false;
+        return Object.values(item).some((v) => String(v || "").trim().length > 0);
+      });
+    }
+    return Object.values(section).some((v) => String(v || "").trim().length > 0);
+  }
+
   const fieldRuntimeMap = new Map();
 
   let lastFieldCount = 0;
@@ -100,6 +148,168 @@
     }
   });
 
+  // --- 深度扫描：自动展开动态区块 ---
+
+  function normalizeDeepScanText(value) {
+    return String(value || "")
+      .toLowerCase()
+      .replace(/\s+/g, "")
+      .replace(/[＊*]+$/g, "")
+      .trim();
+  }
+
+  function getElementFingerprint(el) {
+    return `${el.tagName}:${el.id || ""}:${normalizeDeepScanText(el.textContent || "")}`;
+  }
+
+  function isExpandTrigger(el) {
+    const text = normalizeDeepScanText(el.textContent || "");
+    const ariaLabel = normalizeDeepScanText(el.getAttribute("aria-label") || "");
+    const className = String(el.className || "").toLowerCase();
+
+    // 排除下拉选择框、日期选择器等复合组件
+    if (el.getAttribute("role") === "combobox") return false;
+    if (el.getAttribute("aria-haspopup") === "listbox") return false;
+    if (el.getAttribute("aria-haspopup") === "dialog") return false;
+
+    // 排除包含否定关键词的按钮
+    const combined = `${text} ${ariaLabel}`;
+    if (DEEP_SCAN_EXCLUDE_KEYWORDS.some((kw) => combined.includes(kw))) {
+      return false;
+    }
+
+    // 规则 1：文本含展开关键词
+    if (DEEP_SCAN_EXPAND_KEYWORDS.some((kw) => text.includes(kw) || ariaLabel.includes(kw))) {
+      return true;
+    }
+
+    // 规则 2：类名含展开关键词，且文本较短（可能是图标按钮或 "+"）
+    if (
+      DEEP_SCAN_EXPAND_CLASS_KEYWORDS.some((kw) => className.includes(kw)) &&
+      text.length <= 5
+    ) {
+      return true;
+    }
+
+    // 规则 3：文本以 + 开头或仅为 +
+    if (/^\+/.test(text) || text === "+") {
+      return true;
+    }
+
+    return false;
+  }
+
+  function findExpandButtons(fingerprints) {
+    const selectors = [
+      'button:not([type="submit"])',
+      '[role="button"]',
+      'a[class*="add"]',
+      'a[class*="Add"]',
+      'a[class*="expand"]',
+      'a[class*="Expand"]',
+      'a[class*="more"]',
+      'a[class*="More"]',
+      '[data-action*="add"]',
+      '[data-action*="Add"]',
+      '[data-action*="new"]',
+    ];
+
+    const elements = document.querySelectorAll(selectors.join(","));
+    const candidates = [];
+
+    for (const el of elements) {
+      if (!isVisible(el)) continue;
+      if (el.disabled || el.getAttribute("aria-disabled") === "true") continue;
+      if (el.dataset.deepScanned === "true") continue;
+
+      const fp = getElementFingerprint(el);
+      if (fingerprints.has(fp)) continue;
+
+      if (isExpandTrigger(el)) {
+        fingerprints.add(fp);
+        candidates.push(el);
+      }
+    }
+
+    return candidates;
+  }
+
+  async function waitForNewFields(getCurrentControlCount) {
+    const startCount = getCurrentControlCount();
+    const startTime = Date.now();
+
+    await sleep(DEEP_SCAN_AFTER_CLICK_DELAY);
+
+    while (Date.now() - startTime < DEEP_SCAN_POLL_TIMEOUT) {
+      const currentCount = getCurrentControlCount();
+      if (currentCount > startCount) {
+        await sleep(300);
+        return true;
+      }
+      await sleep(DEEP_SCAN_POLL_INTERVAL);
+    }
+
+    return false;
+  }
+
+  async function triggerExpandableSections(resumeProfile) {
+    const fingerprints = new Set();
+    let totalClicked = 0;
+
+    for (let round = 0; round < DEEP_SCAN_MAX_ROUNDS; round++) {
+      // 根据简历内容过滤展开按钮：只点击有对应数据的章节
+      let buttons = findExpandButtons(fingerprints);
+      if (resumeProfile && buttons.length > 0) {
+        const relevantSections = new Set();
+        for (const entry of DEEP_SCAN_SECTION_MAP) {
+          if (hasSectionContent(resumeProfile, entry.sectionKey)) {
+            relevantSections.add(entry.sectionKey);
+          }
+        }
+        if (relevantSections.size > 0) {
+          buttons = buttons.filter((btn) => {
+            const text = normalizeDeepScanText(btn.textContent || '');
+            // 检查按钮文字是否匹配某个已知章节
+            const matched = DEEP_SCAN_SECTION_MAP.filter((entry) =>
+              entry.patterns.some((p) => text.includes(normalizeDeepScanText(p)))
+            );
+            if (matched.length === 0) return true; // 未匹配到任何章节，保留
+            // 至少有一个匹配的章节有内容才保留
+            return matched.some((m) => relevantSections.has(m.sectionKey));
+          });
+        }
+      }
+      if (buttons.length === 0) break;
+
+      sendLog(
+        "info",
+        `深度扫描第 ${round + 1} 轮：发现 ${buttons.length} 个可展开区块`
+      );
+
+      for (const btn of buttons) {
+        scrollIntoView(btn);
+        clickLikeUser(btn);
+        btn.dataset.deepScanned = "true";
+        totalClicked++;
+
+        const countFields = () => collectControls(document).length;
+        const hasNew = await waitForNewFields(countFields);
+
+        if (hasNew) {
+          sendLog("info", `已触发第 ${totalClicked} 个展开按钮，检测到新字段`);
+        }
+      }
+    }
+
+    if (totalClicked > 0) {
+      sendLog("success", `深度扫描完成：共触发 ${totalClicked} 个展开按钮`);
+    }
+
+    return totalClicked;
+  }
+
+  // --- 深度扫描结束 ---
+
   async function handleStartFill(config, resumeProfile, request = {}) {
     if (isWorking) {
       return { success: false, message: "正在执行中，请稍后再试" };
@@ -132,6 +342,12 @@
             selectionRect.top
           )} width=${Math.round(selectionRect.width)} height=${Math.round(selectionRect.height)}`
         );
+      }
+
+      // 深度扫描阶段：自动发现并展开可折叠区块（仅整页模式）
+      if (scope === "page") {
+        sendLog("info", "正在探索页面上的可展开区块...");
+        await triggerExpandableSections(resumeProfile);
       }
 
       sendLog(
@@ -977,7 +1193,13 @@
     const selectors =
       'input, textarea, select, [contenteditable="true"], [contenteditable=""]';
 
-    return Array.from(scope.querySelectorAll(selectors)).filter((el) => isVisible(el));
+    return Array.from(scope.querySelectorAll(selectors)).filter((el) => {
+      if (!isVisible(el)) return false;
+      // 排除 Ant Design 等 UI 框架的只读搜索输入框（Select / DatePicker 内部组件）
+      if (el.readonly && el.getAttribute("role") === "combobox") return false;
+      if (el.readonly && el.getAttribute("aria-haspopup") === "listbox") return false;
+      return true;
+    });
   }
 
   function isFillableElement(el) {
