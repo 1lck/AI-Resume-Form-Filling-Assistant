@@ -13,9 +13,14 @@ if (!schema) {
   throw new Error("Resume schema is not available");
 }
 
-const RESUME_PROFILE_KEY = "resumeProfile";
-const RESUME_SCHEMA_VERSION_KEY = "resumeSchemaVersion";
-const RESUME_IMPORT_RAW_TEXT_KEY = "resumeImportRawText";
+const resumeStorage = window.ResumeStorage;
+if (!resumeStorage) {
+  throw new Error("Resume storage is not available");
+}
+
+const RESUME_PROFILE_KEY = resumeStorage.keys.profile;
+const RESUME_SCHEMA_VERSION_KEY = resumeStorage.keys.schemaVersion;
+const RESUME_IMPORT_RAW_TEXT_KEY = resumeStorage.keys.rawText;
 
 const BUILTIN_MODEL = {
   id: "builtin-deepseek",
@@ -38,7 +43,7 @@ document.addEventListener("DOMContentLoaded", async () => {
 });
 
 chrome.storage.onChanged.addListener((changes, areaName) => {
-  if (areaName !== "sync") return;
+  if (areaName !== "local" && areaName !== "sync") return;
   if (
     !changes[RESUME_PROFILE_KEY] &&
     !changes[RESUME_IMPORT_RAW_TEXT_KEY] &&
@@ -149,20 +154,11 @@ function resetCollapsedResumeSections() {
 }
 
 async function loadResumeProfile() {
-  const data = await chrome.storage.sync.get([
-    RESUME_PROFILE_KEY,
-    RESUME_IMPORT_RAW_TEXT_KEY,
-    "resumeStructured",
-    "resumeRawText",
-  ]);
-
-  const sourceProfile =
-    data[RESUME_PROFILE_KEY] && typeof data[RESUME_PROFILE_KEY] === "object"
-      ? data[RESUME_PROFILE_KEY]
-      : data.resumeStructured || {};
+  const data = await resumeStorage.loadResumeData();
+  const sourceProfile = data.profile;
 
   resumeProfile = schema.normalizeResumeProfile(sourceProfile);
-  resumeImportTextEl.value = data[RESUME_IMPORT_RAW_TEXT_KEY] || data.resumeRawText || "";
+  resumeImportTextEl.value = data.rawText;
   resetCollapsedResumeSections();
   renderResumeEditor(resumeProfile);
   isResumeDirty = false;
@@ -563,10 +559,10 @@ async function persistResumeProfile({ silent = false } = {}) {
   const nextProfile = collectResumeProfileFromForm();
 
   resumeProfile = nextProfile;
-  await chrome.storage.sync.set({
-    [RESUME_PROFILE_KEY]: nextProfile,
-    [RESUME_SCHEMA_VERSION_KEY]: schema.version,
-    [RESUME_IMPORT_RAW_TEXT_KEY]: resumeImportTextEl.value.trim(),
+  await resumeStorage.saveResumeData({
+    profile: nextProfile,
+    schemaVersion: schema.version,
+    rawText: resumeImportTextEl.value.trim(),
   });
 
   isResumeDirty = false;
@@ -616,7 +612,7 @@ resumePdfFileEl.addEventListener("change", async () => {
     }
 
     resumeImportTextEl.value = text;
-    await chrome.storage.sync.set({ [RESUME_IMPORT_RAW_TEXT_KEY]: text });
+    await resumeStorage.saveRawText(text);
 
     updatePageStatus("success", "PDF 文本提取完成，开始导入到标准简历...");
     await importResumeToSchema(text);
@@ -657,10 +653,10 @@ async function importResumeToSchema(rawText) {
     const normalized = schema.normalizeResumeProfile(parsed);
 
     resumeProfile = normalized;
-    await chrome.storage.sync.set({
-      [RESUME_PROFILE_KEY]: normalized,
-      [RESUME_SCHEMA_VERSION_KEY]: schema.version,
-      [RESUME_IMPORT_RAW_TEXT_KEY]: text,
+    await resumeStorage.saveResumeData({
+      profile: normalized,
+      schemaVersion: schema.version,
+      rawText: text,
     });
 
     resetCollapsedResumeSections();
