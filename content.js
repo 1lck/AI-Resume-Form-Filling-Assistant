@@ -1,4 +1,4 @@
-﻿// Content script: scan fields -> AI mapping to resume paths -> deterministic local fill.
+// Content script: scan fields -> AI mapping to resume paths -> deterministic local fill.
 (function () {
   "use strict";
 
@@ -55,24 +55,41 @@
   const SELECTION_BOX_ID = "ai-resume-fill-selection-box";
   const SELECTION_HINT_ID = "ai-resume-fill-selection-hint";
   const MIN_SELECTION_SIZE = 12;
-
-  // 深度扫描：自动展开可折叠区块
   const DEEP_SCAN_MAX_ROUNDS = 5;
-  const DEEP_SCAN_AFTER_CLICK_DELAY = 500;
-  const DEEP_SCAN_POLL_TIMEOUT = 3000;
-  const DEEP_SCAN_POLL_INTERVAL = 200;
-
+  const DEEP_SCAN_INITIAL_DELAY = 250;
+  const DEEP_SCAN_POLL_TIMEOUT = 1200;
+  const DEEP_SCAN_POLL_INTERVAL = 100;
   const DEEP_SCAN_EXPAND_KEYWORDS = [
-    "添加", "新增", "增加", "展开", "更多", "全部",
-    "add", "expand", "more", "plus",
+    "展开",
+    "展开全部",
+    "查看更多",
+    "查看全部",
+    "showmore",
+    "viewmore",
+    "expand",
   ];
-  const DEEP_SCAN_EXPAND_CLASS_KEYWORDS = ["add", "expand", "more", "plus"];
+  const DEEP_SCAN_MORE_KEYWORDS = ["更多", "more"];
   const DEEP_SCAN_EXCLUDE_KEYWORDS = [
-    "提交", "保存", "删除", "返回", "取消", "关闭",
-    "submit", "save", "delete", "back", "cancel", "close",
+    "添加",
+    "新增",
+    "增加",
+    "新建",
+    "删除",
+    "提交",
+    "保存",
+    "返回",
+    "取消",
+    "关闭",
+    "add",
+    "new",
+    "plus",
+    "delete",
+    "submit",
+    "save",
+    "back",
+    "cancel",
+    "close",
   ];
-
-  // 按钮文本 → 简历章节关键词映射
   const DEEP_SCAN_SECTION_MAP = [
     { patterns: ["教育", "学校", "专业", "学历", "学位", "毕业"], sectionKey: "educations" },
     { patterns: ["实习"], sectionKey: "internships" },
@@ -82,27 +99,11 @@
     { patterns: ["语言", "外语", "雅思", "托福", "cet"], sectionKey: "languages" },
     { patterns: ["校园", "学生", "社团", "社会", "志愿", "科研", "组织"], sectionKey: "campusExperiences" },
     { patterns: ["技能", "特长", "编程", "工具"], sectionKey: "skills" },
-    { patterns: ["花名", "昵称", "别名", "英文名", "曾用名"], sectionKey: "personal" },
-    { patterns: ["作品", "作品集", "博客", "github", "主页", "链接", "在线"], sectionKey: "onlinePresence" },
     { patterns: ["偏好", "期望", "求职", "目标", "薪资"], sectionKey: "jobPreferences" },
     { patterns: ["联系方式", "地址", "电话"], sectionKey: "contactAndLocation" },
     { patterns: ["证件", "身份", "护照", "户口"], sectionKey: "identityAndAuthorization" },
-    { patterns: ["奖项", "荣誉", "获奖", "论文", "专利", "开源", "推荐人"], sectionKey: "additional" },
     { patterns: ["补充", "其他", "备注", "说明"], sectionKey: "additional" },
   ];
-
-  function hasSectionContent(profile, sectionKey) {
-    const section = profile[sectionKey];
-    if (!section) return false;
-    if (typeof section !== "object") return String(section || "").trim().length > 0;
-    if (Array.isArray(section)) {
-      return section.some((item) => {
-        if (!item || typeof item !== "object") return false;
-        return Object.values(item).some((v) => String(v || "").trim().length > 0);
-      });
-    }
-    return Object.values(section).some((v) => String(v || "").trim().length > 0);
-  }
 
   const fieldRuntimeMap = new Map();
 
@@ -148,168 +149,6 @@
     }
   });
 
-  // --- 深度扫描：自动展开动态区块 ---
-
-  function normalizeDeepScanText(value) {
-    return String(value || "")
-      .toLowerCase()
-      .replace(/\s+/g, "")
-      .replace(/[＊*]+$/g, "")
-      .trim();
-  }
-
-  function getElementFingerprint(el) {
-    return `${el.tagName}:${el.id || ""}:${normalizeDeepScanText(el.textContent || "")}`;
-  }
-
-  function isExpandTrigger(el) {
-    const text = normalizeDeepScanText(el.textContent || "");
-    const ariaLabel = normalizeDeepScanText(el.getAttribute("aria-label") || "");
-    const className = String(el.className || "").toLowerCase();
-
-    // 排除下拉选择框、日期选择器等复合组件
-    if (el.getAttribute("role") === "combobox") return false;
-    if (el.getAttribute("aria-haspopup") === "listbox") return false;
-    if (el.getAttribute("aria-haspopup") === "dialog") return false;
-
-    // 排除包含否定关键词的按钮
-    const combined = `${text} ${ariaLabel}`;
-    if (DEEP_SCAN_EXCLUDE_KEYWORDS.some((kw) => combined.includes(kw))) {
-      return false;
-    }
-
-    // 规则 1：文本含展开关键词
-    if (DEEP_SCAN_EXPAND_KEYWORDS.some((kw) => text.includes(kw) || ariaLabel.includes(kw))) {
-      return true;
-    }
-
-    // 规则 2：类名含展开关键词，且文本较短（可能是图标按钮或 "+"）
-    if (
-      DEEP_SCAN_EXPAND_CLASS_KEYWORDS.some((kw) => className.includes(kw)) &&
-      text.length <= 5
-    ) {
-      return true;
-    }
-
-    // 规则 3：文本以 + 开头或仅为 +
-    if (/^\+/.test(text) || text === "+") {
-      return true;
-    }
-
-    return false;
-  }
-
-  function findExpandButtons(fingerprints) {
-    const selectors = [
-      'button:not([type="submit"])',
-      '[role="button"]',
-      'a[class*="add"]',
-      'a[class*="Add"]',
-      'a[class*="expand"]',
-      'a[class*="Expand"]',
-      'a[class*="more"]',
-      'a[class*="More"]',
-      '[data-action*="add"]',
-      '[data-action*="Add"]',
-      '[data-action*="new"]',
-    ];
-
-    const elements = document.querySelectorAll(selectors.join(","));
-    const candidates = [];
-
-    for (const el of elements) {
-      if (!isVisible(el)) continue;
-      if (el.disabled || el.getAttribute("aria-disabled") === "true") continue;
-      if (el.dataset.deepScanned === "true") continue;
-
-      const fp = getElementFingerprint(el);
-      if (fingerprints.has(fp)) continue;
-
-      if (isExpandTrigger(el)) {
-        fingerprints.add(fp);
-        candidates.push(el);
-      }
-    }
-
-    return candidates;
-  }
-
-  async function waitForNewFields(getCurrentControlCount) {
-    const startCount = getCurrentControlCount();
-    const startTime = Date.now();
-
-    await sleep(DEEP_SCAN_AFTER_CLICK_DELAY);
-
-    while (Date.now() - startTime < DEEP_SCAN_POLL_TIMEOUT) {
-      const currentCount = getCurrentControlCount();
-      if (currentCount > startCount) {
-        await sleep(300);
-        return true;
-      }
-      await sleep(DEEP_SCAN_POLL_INTERVAL);
-    }
-
-    return false;
-  }
-
-  async function triggerExpandableSections(resumeProfile) {
-    const fingerprints = new Set();
-    let totalClicked = 0;
-
-    for (let round = 0; round < DEEP_SCAN_MAX_ROUNDS; round++) {
-      // 根据简历内容过滤展开按钮：只点击有对应数据的章节
-      let buttons = findExpandButtons(fingerprints);
-      if (resumeProfile && buttons.length > 0) {
-        const relevantSections = new Set();
-        for (const entry of DEEP_SCAN_SECTION_MAP) {
-          if (hasSectionContent(resumeProfile, entry.sectionKey)) {
-            relevantSections.add(entry.sectionKey);
-          }
-        }
-        if (relevantSections.size > 0) {
-          buttons = buttons.filter((btn) => {
-            const text = normalizeDeepScanText(btn.textContent || '');
-            // 检查按钮文字是否匹配某个已知章节
-            const matched = DEEP_SCAN_SECTION_MAP.filter((entry) =>
-              entry.patterns.some((p) => text.includes(normalizeDeepScanText(p)))
-            );
-            if (matched.length === 0) return true; // 未匹配到任何章节，保留
-            // 至少有一个匹配的章节有内容才保留
-            return matched.some((m) => relevantSections.has(m.sectionKey));
-          });
-        }
-      }
-      if (buttons.length === 0) break;
-
-      sendLog(
-        "info",
-        `深度扫描第 ${round + 1} 轮：发现 ${buttons.length} 个可展开区块`
-      );
-
-      for (const btn of buttons) {
-        scrollIntoView(btn);
-        clickLikeUser(btn);
-        btn.dataset.deepScanned = "true";
-        totalClicked++;
-
-        const countFields = () => collectControls(document).length;
-        const hasNew = await waitForNewFields(countFields);
-
-        if (hasNew) {
-          sendLog("info", `已触发第 ${totalClicked} 个展开按钮，检测到新字段`);
-        }
-      }
-    }
-
-    if (totalClicked > 0) {
-      sendLog("success", `深度扫描完成：共触发 ${totalClicked} 个展开按钮`);
-    }
-
-    return totalClicked;
-  }
-
-  // --- 深度扫描结束 ---
-
   async function handleStartFill(config, resumeProfile, request = {}) {
     if (isWorking) {
       return { success: false, message: "正在执行中，请稍后再试" };
@@ -344,7 +183,6 @@
         );
       }
 
-      // 深度扫描阶段：自动发现并展开可折叠区块（仅整页模式）
       if (scope === "page") {
         sendLog("info", "正在探索页面上的可展开区块...");
         await triggerExpandableSections(resumeProfile);
@@ -541,6 +379,181 @@
     } finally {
       isWorking = false;
     }
+  }
+
+  function normalizeDeepScanText(value) {
+    return String(value || "")
+      .toLowerCase()
+      .replace(/\s+/g, "")
+      .replace(/[＊*]+$/g, "")
+      .trim();
+  }
+
+  function getDeepScanText(el) {
+    return normalizeDeepScanText(
+      [
+        el?.textContent,
+        el?.getAttribute?.("aria-label"),
+        el?.getAttribute?.("title"),
+      ]
+        .filter(Boolean)
+        .join(" ")
+    );
+  }
+
+  function getDeepScanTargetElements(el) {
+    const targets = [];
+    const targetIds = [
+      el?.getAttribute?.("aria-controls"),
+      el?.getAttribute?.("data-target"),
+      el?.getAttribute?.("data-toggle-target"),
+    ]
+      .filter(Boolean)
+      .flatMap((value) => String(value).split(/\s+/));
+
+    for (const targetId of targetIds) {
+      const normalizedTargetId = targetId.startsWith("#")
+        ? targetId.slice(1)
+        : targetId;
+      const target = el?.ownerDocument?.getElementById?.(normalizedTargetId);
+      if (target) targets.push(target);
+    }
+
+    const href = el?.getAttribute?.("href") || "";
+    if (href.startsWith("#")) {
+      const target = el?.ownerDocument?.getElementById?.(href.slice(1));
+      if (target) targets.push(target);
+    }
+
+    return targets;
+  }
+
+  function hasHiddenDeepScanTarget(el) {
+    return getDeepScanTargetElements(el).some((target) => {
+      if (target.hidden || target.getAttribute?.("aria-hidden") === "true") {
+        return true;
+      }
+      return !isVisible(target);
+    });
+  }
+
+  function isDeepScanExpandTrigger(el) {
+    if (!el) return false;
+    const tagName = String(el.tagName || "").toLowerCase();
+    const role = String(el.getAttribute?.("role") || "").toLowerCase();
+    if (tagName !== "button" && tagName !== "a" && role !== "button") {
+      return false;
+    }
+    if (el.disabled || el.getAttribute?.("aria-disabled") === "true") {
+      return false;
+    }
+    if (String(el.getAttribute?.("type") || "").toLowerCase() === "submit") {
+      return false;
+    }
+    if (el.getAttribute?.("aria-haspopup")) return false;
+    if (el.getAttribute?.("aria-expanded") === "true") return false;
+
+    const text = getDeepScanText(el);
+    if (!text || DEEP_SCAN_EXCLUDE_KEYWORDS.some((keyword) => text.includes(keyword))) {
+      return false;
+    }
+
+    const className = normalizeDeepScanText(el.className || "");
+    const hasExplicitExpandText = DEEP_SCAN_EXPAND_KEYWORDS.some((keyword) =>
+      text.includes(keyword)
+    );
+    const hasCollapsedState =
+      el.getAttribute?.("aria-expanded") === "false" ||
+      el.getAttribute?.("data-expanded") === "false" ||
+      hasHiddenDeepScanTarget(el);
+    const hasExpandClass = /(^|[-_])expand(?:ed|able)?([_-]|$)/.test(className);
+    const hasMoreText = DEEP_SCAN_MORE_KEYWORDS.some((keyword) => text.includes(keyword));
+
+    if (hasExplicitExpandText) return true;
+    if (hasExpandClass && hasCollapsedState) return true;
+    return hasMoreText && hasCollapsedState;
+  }
+
+  function hasSectionContent(profile, sectionKey) {
+    const section = profile?.[sectionKey];
+    if (!section) return false;
+    if (Array.isArray(section)) {
+      return section.some((item) =>
+        item && typeof item === "object"
+          ? Object.values(item).some((value) => String(value || "").trim())
+          : Boolean(String(item || "").trim())
+      );
+    }
+    if (typeof section === "object") {
+      return Object.values(section).some((value) => String(value || "").trim());
+    }
+    return Boolean(String(section).trim());
+  }
+
+  function deepScanButtonMatchesProfile(el, resumeProfile) {
+    if (!resumeProfile) return true;
+    const text = getDeepScanText(el);
+    const matchedSections = DEEP_SCAN_SECTION_MAP.filter((entry) =>
+      entry.patterns.some((pattern) => text.includes(normalizeDeepScanText(pattern)))
+    );
+    if (matchedSections.length === 0) return true;
+    return matchedSections.some((entry) => hasSectionContent(resumeProfile, entry.sectionKey));
+  }
+
+  function findDeepScanButtons(clickedElements, resumeProfile) {
+    const selectors = [
+      'button:not([type="submit"])',
+      '[role="button"]',
+      'a[class*="expand"], a[class*="Expand"]',
+      'a[class*="more"], a[class*="More"]',
+    ];
+    return Array.from(document.querySelectorAll(selectors.join(","))).filter((el) => {
+      if (!isVisible(el) || clickedElements.has(el)) return false;
+      if (el.dataset.deepScanned === "true") return false;
+      return isDeepScanExpandTrigger(el) && deepScanButtonMatchesProfile(el, resumeProfile);
+    });
+  }
+
+  async function waitForNewFields(startCount) {
+    await sleep(DEEP_SCAN_INITIAL_DELAY);
+    if (countControls(document) > startCount) return true;
+
+    const startedAt = Date.now();
+    while (Date.now() - startedAt < DEEP_SCAN_POLL_TIMEOUT) {
+      await sleep(DEEP_SCAN_POLL_INTERVAL);
+      if (countControls(document) > startCount) return true;
+    }
+    return false;
+  }
+
+  async function triggerExpandableSections(resumeProfile) {
+    const clickedElements = new WeakSet();
+    let totalClicked = 0;
+
+    for (let round = 0; round < DEEP_SCAN_MAX_ROUNDS; round += 1) {
+      const buttons = findDeepScanButtons(clickedElements, resumeProfile);
+      if (buttons.length === 0) break;
+
+      sendLog("info", `深度扫描第 ${round + 1} 轮：发现 ${buttons.length} 个可展开区块`);
+
+      for (const button of buttons) {
+        const startCount = countControls(document);
+        scrollIntoView(button);
+        clickLikeUser(button);
+        clickedElements.add(button);
+        button.dataset.deepScanned = "true";
+        totalClicked += 1;
+
+        if (await waitForNewFields(startCount)) {
+          sendLog("info", `已触发第 ${totalClicked} 个展开按钮，检测到新字段`);
+        }
+      }
+    }
+
+    if (totalClicked > 0) {
+      sendLog("success", `深度扫描完成：共触发 ${totalClicked} 个展开按钮`);
+    }
+    return totalClicked;
   }
 
   function buildFieldMappingPayload(fields, resumeProfile) {
@@ -1193,13 +1206,7 @@
     const selectors =
       'input, textarea, select, [contenteditable="true"], [contenteditable=""]';
 
-    return Array.from(scope.querySelectorAll(selectors)).filter((el) => {
-      if (!isVisible(el)) return false;
-      // 排除 Ant Design 等 UI 框架的只读搜索输入框（Select / DatePicker 内部组件）
-      if (el.readonly && el.getAttribute("role") === "combobox") return false;
-      if (el.readonly && el.getAttribute("aria-haspopup") === "listbox") return false;
-      return true;
-    });
+    return Array.from(scope.querySelectorAll(selectors)).filter((el) => isVisible(el));
   }
 
   function isFillableElement(el) {
@@ -1627,7 +1634,18 @@
     }
 
     const ok = await setValueWithEvents(runtime.el, desired, runtime);
-    return ok ? { filled: true } : { filled: false, message: "写入失败" };
+    if (ok) {
+      return { filled: true };
+    }
+
+    for (const fallbackValue of buildTextFallbackValues(runtime, desired)) {
+      const fallbackOk = await setValueWithEvents(runtime.el, fallbackValue, runtime);
+      if (fallbackOk) {
+        return { filled: true, message: `已回退为兼容值 ${fallbackValue}` };
+      }
+    }
+
+    return { filled: false, message: "写入失败" };
   }
 
   function prepareTextValueForRuntime(runtime, value) {
@@ -1655,6 +1673,85 @@
     }
 
     return text;
+  }
+
+  function buildTextFallbackValues(runtime, desired) {
+    const text = String(desired || "").trim();
+    if (!text || !isSalaryLikeRuntime(runtime)) {
+      return [];
+    }
+
+    const fallback = getSalaryFallbackValue(runtime, text);
+    if (!fallback || fallback === text) {
+      return [];
+    }
+
+    return [fallback];
+  }
+
+  function isSalaryLikeRuntime(runtime) {
+    const text = [
+      runtime?.label,
+      runtime?.placeholder,
+      runtime?.context,
+      ...(Array.isArray(runtime?.nearbyLabels) ? runtime.nearbyLabels : []),
+    ]
+      .map((item) => String(item || ""))
+      .join(" ");
+
+    return /(薪资|薪酬|月薪|年薪|salary|compensation)/i.test(text);
+  }
+
+  function getSalaryFallbackValue(runtime, value) {
+    const parsed = parseSalaryValue(value);
+    if (!parsed.monthlyLower) {
+      return "";
+    }
+
+    const runtimeText = [
+      runtime?.label,
+      runtime?.placeholder,
+      runtime?.context,
+      ...(Array.isArray(runtime?.nearbyLabels) ? runtime.nearbyLabels : []),
+    ]
+      .map((item) => String(item || ""))
+      .join(" ");
+
+    if (/年薪|万/.test(runtimeText)) {
+      return String(Math.max(1, Math.round((parsed.monthlyLower * 12) / 10000)));
+    }
+
+    return String(parsed.monthlyLower);
+  }
+
+  function parseSalaryValue(value) {
+    const text = String(value || "")
+      .replace(/[,\s]/g, "")
+      .trim();
+    if (!text) {
+      return { monthlyLower: 0 };
+    }
+
+    const numbers = Array.from(text.matchAll(/\d+(?:\.\d+)?/g)).map((match) =>
+      Number(match[0])
+    );
+    if (numbers.length === 0) {
+      return { monthlyLower: 0 };
+    }
+
+    let multiplier = 1;
+    if (/[kK千]/.test(text)) {
+      multiplier = 1000;
+    } else if (/[wW万]/.test(text)) {
+      multiplier = 10000;
+    }
+
+    let monthlyLower = Math.round(numbers[0] * multiplier);
+    if (/年/.test(text) && !/月/.test(text)) {
+      monthlyLower = Math.round(monthlyLower / 12);
+    }
+
+    return { monthlyLower };
   }
 
   function scrollIntoView(el) {
@@ -2044,18 +2141,19 @@
   function getMatchScore(optionText, candidateText) {
     const optionVariants = expandMatchVariants(optionText);
     const candidateVariants = expandMatchVariants(candidateText);
+    let bestScore = 0;
 
     for (const optionVariant of optionVariants) {
       for (const candidateVariant of candidateVariants) {
         if (!optionVariant || !candidateVariant) continue;
         if (optionVariant === candidateVariant) return 100;
         if (optionVariant.includes(candidateVariant) || candidateVariant.includes(optionVariant)) {
-          return 75;
+          bestScore = Math.max(bestScore, 75);
         }
       }
     }
 
-    return 0;
+    return bestScore;
   }
 
   function expandMatchVariants(value) {
@@ -2453,7 +2551,7 @@
     },
     {
       key: "bachelor",
-      values: ["bachelor", "undergraduate", "本科", "学士"],
+      values: ["bachelor", "undergraduate", "本科", "学士", "大学本科"],
     },
     {
       key: "highschool",
@@ -2461,11 +2559,11 @@
     },
     {
       key: "associate",
-      values: ["associate", "大专"],
+      values: ["associate", "大专", "大学专科"],
     },
     {
       key: "master",
-      values: ["master", "masters", "硕士"],
+      values: ["master", "masters", "硕士", "硕士研究生"],
     },
     {
       key: "mba",
@@ -2473,7 +2571,7 @@
     },
     {
       key: "phd",
-      values: ["phd", "doctorate", "博士"],
+      values: ["phd", "doctorate", "博士", "博士研究生", "博士后"],
     },
     {
       key: "single",
@@ -2518,6 +2616,35 @@
     {
       key: "idcard",
       values: ["identitycard", "idcard", "身份证"],
+    },
+    {
+      key: "regularfulltime",
+      values: [
+        "regularfulltime",
+        "fulltimedegree",
+        "统招",
+        "统招全日制",
+        "全日制",
+        "全国普通高等院校全日制",
+      ],
+    },
+    {
+      key: "nonfulltime",
+      values: [
+        "nonfulltime",
+        "parttimedegree",
+        "非统招",
+        "非全日制",
+        "全国普通高等院校非全日制",
+      ],
+    },
+    {
+      key: "jointtraining",
+      values: ["jointtraining", "jointprogram", "联合培养"],
+    },
+    {
+      key: "commissionedtraining",
+      values: ["commissionedtraining", "委托培养"],
     },
     {
       key: "passport",
