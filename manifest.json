@@ -1,15 +1,15 @@
 {
   "manifest_version": 3,
   "name": "AI简历填表助手",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "粘贴简历文本，AI解析并自动填写网页表单（不自动提交）",
+  "minimum_chrome_version": "114",
   "permissions": [
     "activeTab",
     "storage",
     "scripting",
     "sidePanel"
   ],
-  "host_permissions": ["<all_urls>"],
   "action": {
     "default_icon": {
       "128": "icons/icon128.png"
@@ -23,20 +23,5 @@
   },
   "background": {
     "service_worker": "background.js"
-  },
-  "content_scripts": [
-    {
-      "matches": ["<all_urls>"],
-      "js": [
-        "shared/resume-schema.js",
-        "shared/diagnostics.js",
-        "shared/field-text.js",
-        "shared/field-semantics.js",
-        "shared/fill-runtime.js",
-        "shared/content-bridge.js",
-        "content.js"
-      ],
-      "css": ["content.css"]
-    }
-  ]
+  }
 }

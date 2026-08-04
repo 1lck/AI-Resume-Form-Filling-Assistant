@@ -1,0 +1,13 @@
+{
+  "name": "ai-resume-form-filling-assistant",
+  "version": "1.1.0",
+  "private": true,
+  "description": "Tests for the AI Resume Form Filling Assistant Chrome extension",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "test": "node --test tests/*.js",
+    "check": "npm test"
+  }
+}

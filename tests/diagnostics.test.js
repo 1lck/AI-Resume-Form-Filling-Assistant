@@ -70,3 +70,16 @@ test("formatFillSummary surfaces failure reason and final value", () => {
   assert.match(summary, /final="男"/);
   assert.match(summary, /detail="未找到可匹配的下拉选项"/);
 });
+
+test("diagnostic values for sensitive fields are redacted", () => {
+  const summary = diagnostics.formatValueSummary(
+    { fieldId: "f_9", label: "手机号" },
+    { resumePath: "personal.phone" },
+    "13800138000",
+    "13800138000"
+  );
+
+  assert.match(summary, /raw="\[redacted\]"/);
+  assert.match(summary, /final="\[redacted\]"/);
+  assert.doesNotMatch(summary, /13800138000/);
+});

@@ -41,6 +41,12 @@
     return;
   }
 
+  const aiClient = window.ResumeAiClient;
+  if (!aiClient) {
+    console.error("[简历填表助手] Resume AI client not found");
+    return;
+  }
+
   const EXT_TAG = "[简历填表助手]";
   const MAPPING_CACHE_KEY = "fieldMappingCacheV3";
   const CONTROL_SELECTOR =
@@ -55,8 +61,59 @@
   const SELECTION_BOX_ID = "ai-resume-fill-selection-box";
   const SELECTION_HINT_ID = "ai-resume-fill-selection-hint";
   const MIN_SELECTION_SIZE = 12;
+  const DEEP_SCAN_MAX_ROUNDS = 5;
+  const DEEP_SCAN_INITIAL_DELAY = 250;
+  const DEEP_SCAN_POLL_TIMEOUT = 1200;
+  const DEEP_SCAN_MAX_CLICKS = 20;
+  const DEEP_SCAN_EXPAND_KEYWORDS = [
+    "展开",
+    "展开全部",
+    "查看更多",
+    "查看全部",
+    "showmore",
+    "viewmore",
+    "expand",
+  ];
+  const DEEP_SCAN_MORE_KEYWORDS = ["更多", "more"];
+  const DEEP_SCAN_EXCLUDE_KEYWORDS = [
+    "添加",
+    "新增",
+    "增加",
+    "新建",
+    "删除",
+    "提交",
+    "保存",
+    "返回",
+    "取消",
+    "关闭",
+    "add",
+    "new",
+    "plus",
+    "delete",
+    "submit",
+    "save",
+    "back",
+    "cancel",
+    "close",
+  ];
+  const DEEP_SCAN_SECTION_MAP = [
+    { patterns: ["教育", "学校", "专业", "学历", "学位", "毕业"], sectionKey: "educations" },
+    { patterns: ["实习"], sectionKey: "internships" },
+    { patterns: ["工作", "公司", "职位", "任职", "职业"], sectionKey: "workExperiences" },
+    { patterns: ["项目", "产品"], sectionKey: "projects" },
+    { patterns: ["证书", "认证", "资格", "等级"], sectionKey: "certificates" },
+    { patterns: ["语言", "外语", "雅思", "托福", "cet"], sectionKey: "languages" },
+    { patterns: ["校园", "学生", "社团", "社会", "志愿", "科研", "组织"], sectionKey: "campusExperiences" },
+    { patterns: ["技能", "特长", "编程", "工具"], sectionKey: "skills" },
+    { patterns: ["偏好", "期望", "求职", "目标", "薪资"], sectionKey: "jobPreferences" },
+    { patterns: ["联系方式", "地址", "电话"], sectionKey: "contactAndLocation" },
+    { patterns: ["证件", "身份", "护照", "户口"], sectionKey: "identityAndAuthorization" },
+    { patterns: ["补充", "其他", "备注", "说明"], sectionKey: "additional" },
+  ];
 
   const fieldRuntimeMap = new Map();
+  const radioScopeIds = new WeakMap();
+  let radioScopeSequence = 0;
 
   let lastFieldCount = 0;
   let lastMappedCount = 0;
@@ -88,7 +145,7 @@
     }
 
     if (action === "startFill") {
-      handleStartFill(message.config, message.resumeProfile, {
+    handleStartFill(message.modelId, message.resumeProfile, {
         fillMode: message.fillMode,
         scope: message.scope,
       })
@@ -100,7 +157,7 @@
     }
   });
 
-  async function handleStartFill(config, resumeProfile, request = {}) {
+  async function handleStartFill(modelId, resumeProfile, request = {}) {
     if (isWorking) {
       return { success: false, message: "正在执行中，请稍后再试" };
     }
@@ -132,6 +189,11 @@
             selectionRect.top
           )} width=${Math.round(selectionRect.width)} height=${Math.round(selectionRect.height)}`
         );
+      }
+
+      if (scope === "page") {
+        sendLog("info", "正在探索页面上的可展开区块...");
+        await triggerExpandableSections(resumeProfile);
       }
 
       sendLog(
@@ -177,7 +239,7 @@
       });
       const cachedEntry = cacheLookup.entry;
       if (cachedEntry?.mappings?.length) {
-        mappings = cachedEntry.mappings;
+        mappings = normalizeMappings(cachedEntry.mappings, scan.fields);
         cacheHit = true;
         sendLog("info", "已命中本地字段映射缓存，跳过模型调用。");
       } else {
@@ -188,7 +250,11 @@
         );
 
         const promptPayload = buildFieldMappingPayload(scan.fields, resumeProfile);
-        const aiText = await callAI(config, JSON.stringify(promptPayload), "field_mapping");
+        const aiText = await aiClient.callAI(
+          modelId,
+          JSON.stringify(promptPayload),
+          "field_mapping"
+        );
         const parsed = parseJsonFromAiText(aiText);
         mappings = normalizeMappings(parsed?.mappings, scan.fields);
 
@@ -292,7 +358,7 @@
           continue;
         }
 
-        const fillResult = await fillOne(runtime, finalValue);
+        const fillResult = await fillOne(runtime, finalValue, { overwrite: fillMode !== "incremental" });
         sendLog(
           fillResult.filled ? "success" : "warning",
           diagnostics.formatFillSummary({
@@ -327,6 +393,209 @@
     }
   }
 
+  function normalizeDeepScanText(value) {
+    return String(value || "")
+      .toLowerCase()
+      .replace(/\s+/g, "")
+      .replace(/[＊*]+$/g, "")
+      .trim();
+  }
+
+  function getDeepScanText(el) {
+    return normalizeDeepScanText(
+      [
+        el?.textContent,
+        el?.getAttribute?.("aria-label"),
+        el?.getAttribute?.("title"),
+      ]
+        .filter(Boolean)
+        .join(" ")
+    );
+  }
+
+  function getDeepScanTargetElements(el) {
+    const targets = [];
+    const targetIds = [
+      el?.getAttribute?.("aria-controls"),
+      el?.getAttribute?.("data-target"),
+      el?.getAttribute?.("data-toggle-target"),
+    ]
+      .filter(Boolean)
+      .flatMap((value) => String(value).split(/\s+/));
+
+    for (const targetId of targetIds) {
+      const normalizedTargetId = targetId.startsWith("#")
+        ? targetId.slice(1)
+        : targetId;
+      const target = el?.ownerDocument?.getElementById?.(normalizedTargetId);
+      if (target) targets.push(target);
+    }
+
+    const href = el?.getAttribute?.("href") || "";
+    if (href.startsWith("#")) {
+      const target = el?.ownerDocument?.getElementById?.(href.slice(1));
+      if (target) targets.push(target);
+    }
+
+    return targets;
+  }
+
+  function hasHiddenDeepScanTarget(el) {
+    return getDeepScanTargetElements(el).some((target) => {
+      if (target.hidden || target.getAttribute?.("aria-hidden") === "true") {
+        return true;
+      }
+      return !isVisible(target);
+    });
+  }
+
+  function isDeepScanExpandTrigger(el) {
+    if (!el) return false;
+    const tagName = String(el.tagName || "").toLowerCase();
+    const role = String(el.getAttribute?.("role") || "").toLowerCase();
+    if (tagName !== "button" && tagName !== "a" && role !== "button") {
+      return false;
+    }
+    if (el.disabled || el.getAttribute?.("aria-disabled") === "true") {
+      return false;
+    }
+    if (String(el.getAttribute?.("type") || "").toLowerCase() === "submit") {
+      return false;
+    }
+    if (el.getAttribute?.("aria-haspopup")) return false;
+    if (el.getAttribute?.("aria-expanded") === "true") return false;
+
+    const text = getDeepScanText(el);
+    if (!text || DEEP_SCAN_EXCLUDE_KEYWORDS.some((keyword) => text.includes(keyword))) {
+      return false;
+    }
+
+    const className = normalizeDeepScanText(el.className || "");
+    const hasExplicitExpandText = DEEP_SCAN_EXPAND_KEYWORDS.some((keyword) =>
+      text.includes(keyword)
+    );
+    const hasCollapsedState =
+      el.getAttribute?.("aria-expanded") === "false" ||
+      el.getAttribute?.("data-expanded") === "false" ||
+      hasHiddenDeepScanTarget(el);
+    const hasExpandClass = /(^|[-_])expand(?:ed|able)?([_-]|$)/.test(className);
+    const hasMoreText = DEEP_SCAN_MORE_KEYWORDS.some((keyword) => text.includes(keyword));
+
+    if (hasExplicitExpandText) return true;
+    if (hasExpandClass && hasCollapsedState) return true;
+    return hasMoreText && hasCollapsedState;
+  }
+
+  function hasSectionContent(profile, sectionKey) {
+    const section = profile?.[sectionKey];
+    if (!section) return false;
+    if (Array.isArray(section)) {
+      return section.some((item) =>
+        item && typeof item === "object"
+          ? Object.values(item).some((value) => String(value || "").trim())
+          : Boolean(String(item || "").trim())
+      );
+    }
+    if (typeof section === "object") {
+      return Object.values(section).some((value) => String(value || "").trim());
+    }
+    return Boolean(String(section).trim());
+  }
+
+  function deepScanButtonMatchesProfile(el, resumeProfile) {
+    if (!resumeProfile) return true;
+    const text = getDeepScanText(el);
+    const matchedSections = DEEP_SCAN_SECTION_MAP.filter((entry) =>
+      entry.patterns.some((pattern) => text.includes(normalizeDeepScanText(pattern)))
+    );
+    if (matchedSections.length === 0) return true;
+    return matchedSections.some((entry) => hasSectionContent(resumeProfile, entry.sectionKey));
+  }
+
+  function findDeepScanButtons(clickedElements, resumeProfile) {
+    const selectors = [
+      'button:not([type="submit"])',
+      '[role="button"]',
+      'a[class*="expand"], a[class*="Expand"]',
+      'a[class*="more"], a[class*="More"]',
+    ];
+    return Array.from(document.querySelectorAll(selectors.join(","))).filter((el) => {
+      if (!isVisible(el) || clickedElements.has(el)) return false;
+      return isDeepScanExpandTrigger(el) && deepScanButtonMatchesProfile(el, resumeProfile);
+    });
+  }
+
+  async function waitForNewFields(startCount) {
+    if (countControls(document) > startCount) return true;
+
+    return new Promise((resolve) => {
+      let settled = false;
+      let initialTimer = null;
+      let timeoutTimer = null;
+      const observer =
+        typeof MutationObserver === "function"
+          ? new MutationObserver(check)
+          : null;
+
+      function finish(found) {
+        if (settled) return;
+        settled = true;
+        if (initialTimer) clearTimeout(initialTimer);
+        if (timeoutTimer) clearTimeout(timeoutTimer);
+        observer?.disconnect();
+        resolve(found);
+      }
+
+      function check() {
+        if (countControls(document) > startCount) {
+          finish(true);
+        }
+      }
+
+      observer?.observe(document.body || document.documentElement || document, {
+        childList: true,
+        subtree: true,
+        attributes: true,
+        attributeFilter: ["class", "hidden", "style", "aria-hidden"],
+      });
+      initialTimer = setTimeout(check, DEEP_SCAN_INITIAL_DELAY);
+      timeoutTimer = setTimeout(() => finish(false), DEEP_SCAN_POLL_TIMEOUT);
+    });
+  }
+
+  async function triggerExpandableSections(resumeProfile) {
+    const clickedElements = new WeakSet();
+    let totalClicked = 0;
+
+    for (
+      let round = 0;
+      round < DEEP_SCAN_MAX_ROUNDS && totalClicked < DEEP_SCAN_MAX_CLICKS;
+      round += 1
+    ) {
+      const buttons = findDeepScanButtons(clickedElements, resumeProfile);
+      if (buttons.length === 0) break;
+
+      sendLog("info", `深度扫描第 ${round + 1} 轮：发现 ${buttons.length} 个可展开区块`);
+
+      for (const button of buttons.slice(0, DEEP_SCAN_MAX_CLICKS - totalClicked)) {
+        const startCount = countControls(document);
+        scrollIntoView(button);
+        clickLikeUser(button);
+        clickedElements.add(button);
+        totalClicked += 1;
+
+        if (await waitForNewFields(startCount)) {
+          sendLog("info", `已触发第 ${totalClicked} 个展开按钮，检测到新字段`);
+        }
+      }
+    }
+
+    if (totalClicked > 0) {
+      sendLog("success", `深度扫描完成：共触发 ${totalClicked} 个展开按钮`);
+    }
+    return totalClicked;
+  }
+
   function buildFieldMappingPayload(fields, resumeProfile) {
     const resumeFields = schema
       .getCatalogWithValues(resumeProfile)
@@ -343,8 +612,8 @@
       }));
 
     return {
-      url: location.href,
-      title: document.title,
+      url: sanitizePageUrl(location.href),
+      title: String(document.title || "").slice(0, 120),
       allowedTransforms: [
         { type: "none" },
         { type: "date_part", part: "year|month|day" },
@@ -357,18 +626,38 @@
     };
   }
 
+  function sanitizePageUrl(value) {
+    const rawUrl = String(value || "");
+    if (typeof URL !== "function") {
+      return rawUrl.split(/[?#]/, 1)[0];
+    }
+
+    try {
+      const url = new URL(rawUrl);
+      url.search = "";
+      url.hash = "";
+      return url.toString();
+    } catch (_) {
+      return rawUrl.split(/[?#]/, 1)[0];
+    }
+  }
+
   function normalizeMappings(rawMappings, fields) {
     const validFieldIds = new Set(fields.map((field) => String(field.fieldId)));
+    const validResumePaths = new Set(
+      schema.getFieldCatalog({ mode: "max" }).map((field) => field.path)
+    );
     const normalized = [];
 
     for (const item of Array.isArray(rawMappings) ? rawMappings : []) {
       const fieldId = String(item?.fieldId || "").trim();
       if (!fieldId || !validFieldIds.has(fieldId)) continue;
 
+      const resumePath = String(item?.resumePath || "").trim();
       normalized.push({
         fieldId,
-        resumePath: String(item?.resumePath || "").trim(),
-        reason: String(item?.reason || "").trim(),
+        resumePath: resumePath && validResumePaths.has(resumePath) ? resumePath : "",
+        reason: String(item?.reason || "").trim().slice(0, 240),
         transform: normalizeTransform(item?.transform),
       });
     }
@@ -727,7 +1016,16 @@
 
       const type = baseInputType;
       if (
-        ["hidden", "submit", "button", "reset", "image", "range", "color"].includes(type)
+        [
+          "hidden",
+          "password",
+          "submit",
+          "button",
+          "reset",
+          "image",
+          "range",
+          "color",
+        ].includes(type)
       ) {
         continue;
       }
@@ -751,7 +1049,11 @@
 
       if (type === "radio" || type === "checkbox") {
         const name = el.getAttribute("name") || el.id || "";
-        const groupKey = `${type}:${name || "(no-name)"}`;
+        const groupScope =
+          el.closest?.('form, fieldset, [role="radiogroup"], [role="group"]') ||
+          el.parentElement ||
+          el;
+        const groupKey = `${type}:${getRadioScopeId(groupScope)}:${name || "(no-name)"}`;
         const groupMap = type === "radio" ? radioGroups : checkboxGroups;
 
         if (!groupMap.has(groupKey)) {
@@ -882,6 +1184,18 @@
     }
 
     return { fields, runtime };
+  }
+
+  function getRadioScopeId(element) {
+    if (!element || (typeof element !== "object" && typeof element !== "function")) {
+      return "global";
+    }
+
+    if (!radioScopeIds.has(element)) {
+      radioScopeSequence += 1;
+      radioScopeIds.set(element, `scope-${radioScopeSequence}`);
+    }
+    return radioScopeIds.get(element);
   }
 
   function runtimeMatchesSelection(runtime, selectionRect) {
@@ -1341,7 +1655,7 @@
     return Boolean(String(runtime.el?.value ?? "").trim());
   }
 
-  async function fillOne(runtime, value) {
+  async function fillOne(runtime, value, { overwrite = true } = {}) {
     if (!runtime) return { filled: false, message: "字段不存在" };
 
     if (runtime.kind === "file") {
@@ -1357,10 +1671,11 @@
       let any = false;
       for (const option of runtime.options || []) {
         const shouldCheck = matchesAnyCandidate(option.label || option.value, desired);
-        if (!shouldCheck) continue;
-
-        const ok = await safeCheck(option.el, true);
-        if (ok) any = true;
+        const shouldBeChecked = overwrite
+          ? shouldCheck
+          : Boolean(option.el?.checked) || shouldCheck;
+        const ok = await safeCheck(option.el, shouldBeChecked);
+        if (ok && shouldCheck) any = true;
       }
 
       return any
@@ -1785,7 +2100,6 @@
     el.focus?.();
     el.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
     el.dispatchEvent(new MouseEvent("mouseup", { bubbles: true }));
-    el.dispatchEvent(new MouseEvent("click", { bubbles: true }));
     if (typeof el.click === "function") {
       el.click();
     }
@@ -1961,32 +2275,6 @@
 
   function sleep(ms) {
     return new Promise((resolve) => setTimeout(resolve, ms));
-  }
-
-  function callAI(config, prompt, mode) {
-    return new Promise((resolve, reject) => {
-      chrome.runtime.sendMessage(
-        { action: "callAI", config, prompt, mode },
-        (response) => {
-          if (chrome.runtime.lastError) {
-            reject(new Error(chrome.runtime.lastError.message));
-            return;
-          }
-
-          if (!response) {
-            reject(new Error("AI 响应为空"));
-            return;
-          }
-
-          if (response.success) {
-            resolve(response.data);
-            return;
-          }
-
-          reject(new Error(response.error || "AI 调用失败"));
-        }
-      );
-    });
   }
 
   function parseJsonFromAiText(text) {

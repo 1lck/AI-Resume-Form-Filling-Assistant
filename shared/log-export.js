@@ -15,6 +15,7 @@
     const STORE_NAME = "handles";
     const PROJECT_ROOT_KEY = "project-root";
     const LOGS_DIR_NAME = "debug-logs";
+    const MAX_LOG_FILES = 50;
 
     function compactText(value) {
       return String(value ?? "")
@@ -63,6 +64,17 @@
       }
     }
 
+    function sanitizeUrlForExport(value) {
+      try {
+        const url = new URL(String(value || ""));
+        url.search = "";
+        url.hash = "";
+        return url.toString();
+      } catch (_) {
+        return "";
+      }
+    }
+
     function buildLogFileName(session) {
       const timestamp = formatFileTimestamp(session?.startedAt || Date.now());
       const host = sanitizeSegment(getHostFromUrl(session?.url || session?.tab?.url), "unknown-host");
@@ -89,7 +101,7 @@
         errorMessage: session?.errorMessage || "",
         tab: {
           id: session?.tab?.id ?? null,
-          url: session?.tab?.url || "",
+          url: sanitizeUrlForExport(session?.tab?.url),
           title: session?.tab?.title || "",
         },
         stats: {
@@ -212,16 +224,36 @@
         await writable.close();
       }
 
+      await pruneLogFiles(dirHandle);
+
       return {
         fileName,
         relativePath: `${LOGS_DIR_NAME}/${fileName}`,
       };
     }
 
+    async function pruneLogFiles(dirHandle, maxFiles = MAX_LOG_FILES) {
+      if (!dirHandle?.entries) return;
+
+      const files = [];
+      for await (const [name, entry] of dirHandle.entries()) {
+        if (entry?.kind === "file" && name.endsWith(".json")) {
+          files.push(name);
+        }
+      }
+
+      files.sort();
+      const staleFiles = files.slice(0, Math.max(0, files.length - maxFiles));
+      for (const name of staleFiles) {
+        await dirHandle.removeEntry(name);
+      }
+    }
+
     return {
       LOGS_DIR_NAME,
       buildLogFileName,
       createLogExportPayload,
+      sanitizeUrlForExport,
       supportsDirectoryPicker,
       saveProjectRootHandle,
       loadProjectRootHandle,

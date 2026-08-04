@@ -1,0 +1,53 @@
+name: Test
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        node-version: [20.x, 22.x]
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node-version }}
+
+      - name: Run tests
+        run: npm test
+
+      - name: Check JavaScript syntax
+        shell: bash
+        run: |
+          set -euo pipefail
+          while IFS= read -r file; do
+            node --check "$file"
+          done < <(git ls-files '*.js')
+
+      - name: Check JSON configuration
+        run: |
+          node <<'NODE'
+          const fs = require("node:fs");
+          const files = ["manifest.json"];
+          if (fs.existsSync("templates")) {
+            files.push(
+              ...fs.readdirSync("templates")
+                .filter((name) => name.endsWith(".json"))
+                .map((name) => `templates/${name}`)
+            );
+          }
+          for (const file of files) {
+            JSON.parse(fs.readFileSync(file, "utf8"));
+            console.log(`valid JSON: ${file}`);
+          }
+          NODE

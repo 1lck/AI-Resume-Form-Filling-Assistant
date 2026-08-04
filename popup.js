@@ -64,6 +64,26 @@ if (!schema) {
   throw new Error("Resume schema is not available");
 }
 
+const resumeStorage = window.ResumeStorage;
+if (!resumeStorage) {
+  throw new Error("Resume storage is not available");
+}
+
+const modelStorage = window.ResumeModelStorage;
+if (!modelStorage) {
+  throw new Error("Model storage is not available");
+}
+
+const aiClient = window.ResumeAiClient;
+if (!aiClient) {
+  throw new Error("AI client is not available");
+}
+
+const resumePrompts = window.ResumePrompts;
+if (!resumePrompts) {
+  throw new Error("Resume prompts are not available");
+}
+
 const logExport = window.ResumeLogExport;
 if (!logExport) {
   throw new Error("Resume log export is not available");
@@ -79,19 +99,12 @@ if (!contentBridge) {
   throw new Error("Resume content bridge is not available");
 }
 
-const RESUME_PROFILE_KEY = "resumeProfile";
-const RESUME_SCHEMA_VERSION_KEY = "resumeSchemaVersion";
-const RESUME_IMPORT_RAW_TEXT_KEY = "resumeImportRawText";
+const RESUME_PROFILE_KEY = resumeStorage.keys.profile;
+const RESUME_SCHEMA_VERSION_KEY = resumeStorage.keys.schemaVersion;
+const RESUME_IMPORT_RAW_TEXT_KEY = resumeStorage.keys.rawText;
 const MAPPING_CACHE_KEY = "fieldMappingCacheV3";
 
-const BUILTIN_MODEL = {
-  id: "builtin-deepseek",
-  name: "DeepSeek",
-  baseUrl: "https://api.deepseek.com/v1",
-  apiKey: "",
-  model: "deepseek-chat",
-  builtin: true,
-};
+const BUILTIN_MODEL = modelStorage.DEFAULT_MODEL;
 
 let editingModelId = null;
 let isFilling = false;
@@ -144,7 +157,7 @@ document.addEventListener("DOMContentLoaded", async () => {
 });
 
 chrome.storage.onChanged.addListener((changes, areaName) => {
-  if (areaName !== "sync") return;
+  if (areaName !== "local" && areaName !== "sync") return;
   if (
     !changes[RESUME_PROFILE_KEY] &&
     !changes[RESUME_IMPORT_RAW_TEXT_KEY] &&
@@ -405,67 +418,31 @@ function closeEditModal() {
 }
 
 async function initModels() {
-  const data = await chrome.storage.sync.get([
-    "aiModels",
-    "activeModelId",
-    "baseUrl",
-    "apiKey",
-    "model",
-  ]);
-
-  if (!data.aiModels && data.apiKey) {
-    const customModel = {
-      id: `custom-${Date.now()}`,
-      name: "自定义模型",
-      baseUrl: data.baseUrl || BUILTIN_MODEL.baseUrl,
-      apiKey: data.apiKey,
-      model: data.model || BUILTIN_MODEL.model,
-      builtin: false,
-    };
-
-    await chrome.storage.sync.set({
-      aiModels: [customModel],
-      activeModelId: customModel.id,
-    });
-    return;
-  }
-
-  if (!data.aiModels) {
-    await chrome.storage.sync.set({
-      aiModels: [],
-      activeModelId: BUILTIN_MODEL.id,
-    });
-  }
+  await modelStorage.loadModelState();
 }
 
 async function getAllModels() {
-  const data = await chrome.storage.sync.get(["aiModels", "builtinModelOverride"]);
-  const override = data.builtinModelOverride;
-  const builtin =
-    override && typeof override === "object"
-      ? { ...BUILTIN_MODEL, ...override, id: BUILTIN_MODEL.id, builtin: true }
-      : BUILTIN_MODEL;
-
-  return [builtin, ...(data.aiModels || [])];
+  const state = await modelStorage.loadModelState();
+  return [modelStorage.buildBuiltinModel(state.builtinOverride), ...state.models];
 }
 
 async function getActiveModel() {
-  const data = await chrome.storage.sync.get(["activeModelId"]);
+  const state = await modelStorage.loadModelState();
   const models = await getAllModels();
-  const activeId = data.activeModelId || BUILTIN_MODEL.id;
+  const activeId = state.activeModelId || BUILTIN_MODEL.id;
   return models.find((model) => model.id === activeId) || BUILTIN_MODEL;
 }
 
 async function renderModelList() {
   const models = await getAllModels();
-  const data = await chrome.storage.sync.get(["activeModelId"]);
-  const activeId = data.activeModelId || BUILTIN_MODEL.id;
+  const state = await modelStorage.loadModelState();
+  const activeId = state.activeModelId || BUILTIN_MODEL.id;
 
   modelList.innerHTML = models
     .map(
       (model) => `
-        <div class="model-item ${model.id === activeId ? "active" : ""}" data-model-id="${model.id}">
-          <input type="radio" name="activeModel" class="model-radio" value="${model.id}" ${
+        <div class="model-item ${model.id === activeId ? "active" : ""}" data-model-id="${escapeHtml(model.id)}">
+          <input type="radio" name="activeModel" class="model-radio" value="${escapeHtml(model.id)}" ${
             model.id === activeId ? "checked" : ""
           }>
           <div class="model-info">
@@ -476,13 +453,13 @@ async function renderModelList() {
             <div class="model-meta">${escapeHtml(model.model)}</div>
           </div>
           <div class="model-actions">
-            <button class="icon-btn edit-model-btn" data-model-id="${model.id}">
+              <button class="icon-btn edit-model-btn" data-model-id="${escapeHtml(model.id)}">
               <svg width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" /></svg>
             </button>
             ${
               model.builtin
                 ? ""
-                : `<button class="icon-btn delete-model-btn" data-model-id="${model.id}">
+                : `<button class="icon-btn delete-model-btn" data-model-id="${escapeHtml(model.id)}">
                      <svg width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
                    </button>`
             }
@@ -503,7 +480,7 @@ async function renderModelList() {
 
       const modelId = item.dataset.modelId;
       const model = models.find((entry) => entry.id === modelId);
-      await chrome.storage.sync.set({ activeModelId: modelId });
+      await modelStorage.saveActiveModelId(modelId);
       addLog("success", `已切换模型：${model?.name || modelId}`);
       closeModal();
     });
@@ -512,7 +489,7 @@ async function renderModelList() {
   document.querySelectorAll(".model-radio").forEach((radio) => {
     radio.addEventListener("change", async (event) => {
       event.stopPropagation();
-      await chrome.storage.sync.set({ activeModelId: event.target.value });
+      await modelStorage.saveActiveModelId(event.target.value);
       renderModelList();
     });
   });
@@ -530,17 +507,18 @@ async function renderModelList() {
       const modelId = event.currentTarget.dataset.modelId;
       if (!confirm("确定要删除这个模型吗？")) return;
 
-      const data = await chrome.storage.sync.get(["aiModels", "activeModelId"]);
-      const modelsWithoutCurrent = (data.aiModels || []).filter(
+      const state = await modelStorage.loadModelState();
+      const modelsWithoutCurrent = state.models.filter(
         (model) => model.id !== modelId
       );
 
-      const updates = { aiModels: modelsWithoutCurrent };
-      if (data.activeModelId === modelId) {
-        updates.activeModelId = BUILTIN_MODEL.id;
+      await modelStorage.saveModelState({
+        models: modelsWithoutCurrent,
+        builtinOverride: state.builtinOverride,
+      });
+      if (state.activeModelId === modelId) {
+        await modelStorage.saveActiveModelId(BUILTIN_MODEL.id);
       }
-
-      await chrome.storage.sync.set(updates);
       renderModelList();
     });
   });
@@ -572,20 +550,24 @@ saveModelBtn.addEventListener("click", async () => {
   saveModelBtn.textContent = "保存中...";
 
   try {
-    const data = await chrome.storage.sync.get(["aiModels"]);
-    const models = data.aiModels || [];
+    modelStorage.validateBaseUrl(baseUrl);
+    const state = await modelStorage.loadModelState();
+    const models = [...state.models];
 
     if (editingModelId === BUILTIN_MODEL.id) {
-      await chrome.storage.sync.set({
-        builtinModelOverride: { name, baseUrl, apiKey, model },
-        activeModelId: BUILTIN_MODEL.id,
+      await modelStorage.saveModelState({
+        models,
+        builtinOverride: { name, baseUrl, apiKey, model },
       });
     } else if (editingModelId) {
       const index = models.findIndex((item) => item.id === editingModelId);
       if (index !== -1) {
         models[index] = { ...models[index], name, baseUrl, apiKey, model };
       }
-      await chrome.storage.sync.set({ aiModels: models });
+      await modelStorage.saveModelState({
+        models,
+        builtinOverride: state.builtinOverride,
+      });
     } else {
       models.push({
         id: `custom-${Date.now()}`,
@@ -595,7 +577,10 @@ saveModelBtn.addEventListener("click", async () => {
         model,
         builtin: false,
       });
-      await chrome.storage.sync.set({ aiModels: models });
+      await modelStorage.saveModelState({
+        models,
+        builtinOverride: state.builtinOverride,
+      });
     }
 
     showEditStatus("success", "保存成功");
@@ -603,6 +588,9 @@ saveModelBtn.addEventListener("click", async () => {
       closeEditModal();
       renderModelList();
     }, 300);
+  } catch (error) {
+    console.error("[popup] 保存模型配置失败:", error);
+    showEditStatus("error", `保存失败：${error.message}`);
   } finally {
     setTimeout(() => {
       saveModelBtn.disabled = false;
@@ -660,20 +648,11 @@ function resetCollapsedResumeSections() {
 }
 
 async function loadResumeProfile() {
-  const data = await chrome.storage.sync.get([
-    RESUME_PROFILE_KEY,
-    RESUME_IMPORT_RAW_TEXT_KEY,
-    "resumeStructured",
-    "resumeRawText",
-  ]);
-
-  const sourceProfile =
-    data[RESUME_PROFILE_KEY] && typeof data[RESUME_PROFILE_KEY] === "object"
-      ? data[RESUME_PROFILE_KEY]
-      : data.resumeStructured || {};
+  const data = await resumeStorage.loadResumeData();
+  const sourceProfile = data.profile;
 
   resumeProfile = schema.normalizeResumeProfile(sourceProfile);
-  resumeImportTextEl.value = data[RESUME_IMPORT_RAW_TEXT_KEY] || data.resumeRawText || "";
+  resumeImportTextEl.value = data.rawText;
   resetCollapsedResumeSections();
   renderResumeEditor(resumeProfile);
   isResumeDirty = false;
@@ -1091,10 +1070,10 @@ async function persistResumeProfile({ silent = false } = {}) {
   const nextProfile = collectResumeProfileFromForm();
 
   resumeProfile = nextProfile;
-  await chrome.storage.sync.set({
-    [RESUME_PROFILE_KEY]: nextProfile,
-    [RESUME_SCHEMA_VERSION_KEY]: schema.version,
-    [RESUME_IMPORT_RAW_TEXT_KEY]: resumeImportTextEl.value.trim(),
+  await resumeStorage.saveResumeData({
+    profile: nextProfile,
+    schemaVersion: schema.version,
+    rawText: resumeImportTextEl.value.trim(),
   });
 
   isResumeDirty = false;
@@ -1146,7 +1125,7 @@ resumePdfFileEl.addEventListener("change", async () => {
     }
 
     resumeImportTextEl.value = text;
-    await chrome.storage.sync.set({ [RESUME_IMPORT_RAW_TEXT_KEY]: text });
+    await resumeStorage.saveRawText(text);
 
     addLog("success", "PDF 文本提取完成，开始导入到标准简历...");
     await importResumeToSchema(text);
@@ -1182,17 +1161,19 @@ async function importResumeToSchema(rawText) {
   updateStatus("running", "导入中...");
 
   try {
-    const config = pickConfig(activeModel);
-    const prompt = buildResumeImportPrompt(limitTextForPrompt(text));
-    const aiText = await callAI(config, prompt, "resume_import");
+    const prompt = resumePrompts.buildResumeImportPrompt(
+      schema,
+      limitTextForPrompt(text)
+    );
+    const aiText = await aiClient.callAI(activeModel.id, prompt, "resume_import");
     const parsed = parseJsonFromAiText(aiText);
     const normalized = schema.normalizeResumeProfile(parsed);
 
     resumeProfile = normalized;
-    await chrome.storage.sync.set({
-      [RESUME_PROFILE_KEY]: normalized,
-      [RESUME_SCHEMA_VERSION_KEY]: schema.version,
-      [RESUME_IMPORT_RAW_TEXT_KEY]: text,
+    await resumeStorage.saveResumeData({
+      profile: normalized,
+      schemaVersion: schema.version,
+      rawText: text,
     });
 
     resetCollapsedResumeSections();
@@ -1212,35 +1193,6 @@ async function importResumeToSchema(rawText) {
     uploadPdfBtn.disabled = false;
     importResumeBtn.textContent = "AI 导入到标准简历";
   }
-}
-
-function buildResumeImportPrompt(rawText) {
-  const optionRules = schema
-    .getFieldCatalog()
-    .filter((field) => Array.isArray(field.options) && field.options.length > 0)
-    .map(
-      (field) =>
-        `- ${field.path}: ${field.options.filter(Boolean).join(" | ")}`
-    )
-    .join("\n");
-
-  return [
-    "请把下面的原始简历内容提取到固定 JSON 模板中。",
-    "要求：",
-    "1. 只输出 JSON，不要解释。",
-    "2. 只能使用模板中已有字段，不要新增字段。",
-    "3. 没有信息的字段保持空字符串。",
-    "4. 列表字段按时间从近到远填写前几个槽位，剩余槽位留空。",
-    "5. 日期尽量输出为 YYYY-MM-DD；若只能确认到月份，可输出 YYYY-MM。",
-    "6. 下列枚举字段只能使用给定选项值：",
-    optionRules,
-    "",
-    "固定 JSON 模板：",
-    schema.createImportTemplateString(),
-    "",
-    "原始简历内容：",
-    rawText,
-  ].join("\n");
 }
 
 function limitTextForPrompt(text) {
@@ -1368,10 +1320,10 @@ async function runFill(actionKey) {
       throw new Error("当前页面仍在运行旧版插件脚本。这通常发生在刚重载扩展后；刷新当前页面一次后再重试即可");
     }
 
-    const config = pickConfig(activeModel);
+    const modelId = activeModel.id;
     const response = await sendTabMessage(tab.id, {
       action: "startFill",
-      config,
+      modelId,
       resumeProfile,
       fillMode: actionConfig.fillMode,
       scope: actionConfig.scope,
@@ -1546,6 +1498,7 @@ async function injectContentScript(tabId) {
         "shared/field-semantics.js",
         "shared/fill-runtime.js",
         "shared/content-bridge.js",
+        "shared/ai-client.js",
         "content.js",
       ],
     });
@@ -1569,40 +1522,6 @@ function sendTabMessage(tabId, message) {
 
       resolve(response);
     });
-  });
-}
-
-function pickConfig(activeModel) {
-  return {
-    baseUrl: activeModel.baseUrl,
-    apiKey: activeModel.apiKey,
-    model: activeModel.model,
-  };
-}
-
-function callAI(config, prompt, mode) {
-  return new Promise((resolve, reject) => {
-    chrome.runtime.sendMessage(
-      { action: "callAI", config, prompt, mode },
-      (response) => {
-        if (chrome.runtime.lastError) {
-          reject(new Error(chrome.runtime.lastError.message));
-          return;
-        }
-
-        if (!response) {
-          reject(new Error("AI 响应为空"));
-          return;
-        }
-
-        if (response.success) {
-          resolve(response.data);
-          return;
-        }
-
-        reject(new Error(response.error || "AI 调用失败"));
-      }
-    );
   });
 }
 
@@ -1785,7 +1704,9 @@ function escapeHtml(text) {
   return String(text)
     .replace(/&/g, "&amp;")
     .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;");
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
 }
 
 clearLogBtn.addEventListener("click", () => {

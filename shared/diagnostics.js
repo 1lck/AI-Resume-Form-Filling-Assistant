@@ -92,6 +92,25 @@
       return type;
     }
 
+    function isSensitiveField(field, mapping) {
+      const text = [
+        field?.label,
+        field?.name,
+        field?.id,
+        mapping?.resumePath,
+      ]
+        .map((item) => compactText(item))
+        .join(" ");
+
+      return /(姓名|名字|name|邮箱|email|手机|电话|phone|身份证|证件|护照|passport|地址|住址|微信|wechat|生日|出生|薪资|salary|简历|resume)/i.test(
+        text
+      );
+    }
+
+    function summarizeLoggedValue(value, field, mapping) {
+      return isSensitiveField(field, mapping) ? '"[redacted]"' : summarizeValue(value);
+    }
+
     function formatFieldSummary(field) {
       return [
         "[扫描]",
@@ -125,8 +144,8 @@
         "[取值]",
         compactText(field?.fieldId) || "(no-field-id)",
         compactText(mapping?.resumePath) || "(unmapped)",
-        `raw=${summarizeValue(rawValue)}`,
-        `final=${summarizeValue(finalValue)}`,
+        `raw=${summarizeLoggedValue(rawValue, field, mapping)}`,
+        `final=${summarizeLoggedValue(finalValue, field, mapping)}`,
       ].join(" ");
     }
 
@@ -137,8 +156,8 @@
         `${summarizeValue(field?.label)} -> ${
           compactText(mapping?.resumePath) || "(unmapped)"
         }`,
-        `raw=${summarizeValue(rawValue)}`,
-        `final=${summarizeValue(finalValue)}`,
+        `raw=${summarizeLoggedValue(rawValue, field, mapping)}`,
+        `final=${summarizeLoggedValue(finalValue, field, mapping)}`,
         `detail=${summarizeValue(detail)}`,
       ].join(" ");
     }
@@ -157,8 +176,8 @@
         `${summarizeValue(field?.label)} -> ${
           compactText(mapping?.resumePath) || "(unmapped)"
         }`,
-        `raw=${summarizeValue(rawValue)}`,
-        `final=${summarizeValue(finalValue)}`,
+        `raw=${summarizeLoggedValue(rawValue, field, mapping)}`,
+        `final=${summarizeLoggedValue(finalValue, field, mapping)}`,
         `detail=${summarizeValue(fillResult?.message)}`,
       ].join(" ");
     }
@@ -170,6 +189,7 @@
       formatSkipSummary,
       formatFillSummary,
       formatTransform,
+      isSensitiveField,
       summarizeValue,
       summarizeOptions,
       truncateText,

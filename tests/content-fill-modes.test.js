@@ -33,7 +33,7 @@ function loadContentHelpers() {
     ${extractFunction(
       source,
       "function hasExistingFieldValue(runtime) {",
-      "async function fillOne(runtime, value) {"
+      "async function fillOne(runtime, value, { overwrite = true } = {}) {"
     )}
     module.exports = {
       normalizeSelectionRect,
@@ -47,6 +47,27 @@ function loadContentHelpers() {
     exports: {},
   };
 
+  vm.createContext(context);
+  vm.runInContext(snippet, context);
+  return context.module.exports;
+}
+
+function loadCheckboxFillHelper() {
+  const source = fs.readFileSync(
+    path.join(__dirname, "../content.js"),
+    "utf8"
+  );
+  const start = source.indexOf("  async function fillOne(runtime, value");
+  const end = source.indexOf("  function prepareTextValueForRuntime", start);
+  const snippet = `
+    function normalizeCheckboxCandidates(value) { return Array.isArray(value) ? value : String(value).split(","); }
+    function matchesAnyCandidate(label, candidates) { return candidates.includes(label); }
+    const checks = [];
+    async function safeCheck(element, checked) { checks.push({ element, checked }); element.checked = checked; return true; }
+    ${source.slice(start, end)}
+    module.exports = { fillOne, checks };
+  `;
+  const context = { module: { exports: {} }, exports: {} };
   vm.createContext(context);
   vm.runInContext(snippet, context);
   return context.module.exports;
@@ -123,4 +144,25 @@ test("hasExistingFieldValue detects filled controls for incremental mode", () =>
     }),
     true
   );
+});
+
+test("overwrite checkbox filling clears options outside the desired set", async () => {
+  const helpers = loadCheckboxFillHelper();
+  const first = { checked: true };
+  const second = { checked: true };
+
+  const result = await helpers.fillOne(
+    {
+      kind: "checkbox_group",
+      options: [
+        { el: first, label: "保留" },
+        { el: second, label: "清除" },
+      ],
+    },
+    ["保留"]
+  );
+
+  assert.equal(result.filled, true);
+  assert.equal(first.checked, true);
+  assert.equal(second.checked, false);
 });

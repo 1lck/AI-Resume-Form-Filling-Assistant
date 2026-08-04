@@ -60,3 +60,11 @@ test("createLogExportPayload keeps logs, stats, and tab metadata", () => {
   assert.equal(payload.logs.length, 1);
   assert.equal(payload.logs[0].message, "[扫描] f_1 text label=\"电子邮箱\"");
 });
+
+test("createLogExportPayload removes query and hash from tab URLs", () => {
+  const payload = logExport.createLogExportPayload({
+    tab: { url: "https://jobs.example.com/apply?token=secret#step-2" },
+  });
+
+  assert.equal(payload.tab.url, "https://jobs.example.com/apply");
+});
