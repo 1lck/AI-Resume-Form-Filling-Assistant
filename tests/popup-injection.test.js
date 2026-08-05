@@ -36,3 +36,28 @@ test("popup fill runner sends mode and scope for new fill actions", () => {
   assert.match(source, /incrementalPage/);
   assert.match(source, /selection/);
 });
+
+test("manifest grants HTTP(S) access after switching the side panel to any web tab", () => {
+  const manifest = JSON.parse(
+    fs.readFileSync(path.join(__dirname, "../manifest.json"), "utf8")
+  );
+  const packageJson = JSON.parse(
+    fs.readFileSync(path.join(__dirname, "../package.json"), "utf8")
+  );
+
+  assert.deepEqual(manifest.host_permissions, ["http://*/*", "https://*/*"]);
+  assert.equal(manifest.permissions.includes("activeTab"), false);
+  assert.equal("content_scripts" in manifest, false);
+  assert.equal(manifest.version, packageJson.version);
+});
+
+test("popup distinguishes missing page access from restricted system pages", () => {
+  const source = fs.readFileSync(
+    path.join(__dirname, "../popup.js"),
+    "utf8"
+  );
+
+  assert.match(source, /if \(!tab\.url\)/);
+  assert.match(source, /网页权限不可用/);
+  assert.match(source, /if \(!isSupportedWebPageUrl\(tab\.url\)\)/);
+});

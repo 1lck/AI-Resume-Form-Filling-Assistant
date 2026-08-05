@@ -1295,13 +1295,13 @@ async function runFill(actionKey) {
     return;
   }
 
-  if (
-    !tab.url ||
-    tab.url.startsWith("chrome://") ||
-    tab.url.startsWith("chrome-extension://") ||
-    tab.url.startsWith("edge://") ||
-    tab.url.startsWith("about:")
-  ) {
+  if (!tab.url) {
+    addLog("error", "无法读取当前网页地址，请重新加载扩展后再试");
+    updateStatus("error", "网页权限不可用");
+    return;
+  }
+
+  if (!isSupportedWebPageUrl(tab.url)) {
     addLog("error", "请切换到要填写的网页（非系统页面）");
     updateStatus("error", "系统页面");
     return;
@@ -1448,6 +1448,15 @@ function buildFillTipText(actionKey, cacheHit) {
     : `${modeLabel}已生成新的字段映射，并写入本地缓存。`;
 }
 
+function isSupportedWebPageUrl(url) {
+  try {
+    const protocol = new URL(url).protocol;
+    return protocol === "http:" || protocol === "https:";
+  } catch (_) {
+    return false;
+  }
+}
+
 async function ensureContentScriptInjected(tabId) {
   let staleScriptDetected = false;
 
@@ -1474,13 +1483,7 @@ async function ensureContentScriptInjected(tabId) {
 async function injectContentScript(tabId) {
   try {
     const tab = await chrome.tabs.get(tabId);
-    if (
-      !tab.url ||
-      tab.url.startsWith("chrome://") ||
-      tab.url.startsWith("chrome-extension://") ||
-      tab.url.startsWith("edge://") ||
-      tab.url.startsWith("about:")
-    ) {
+    if (!isSupportedWebPageUrl(tab.url)) {
       return false;
     }
 
