@@ -16,6 +16,9 @@ const deleteTemplateBtn = document.getElementById("deleteTemplateBtn");
 const exportTemplatesBtn = document.getElementById("exportTemplatesBtn");
 const importTemplatesBtn = document.getElementById("importTemplatesBtn");
 const importTemplatesFileEl = document.getElementById("importTemplatesFile");
+const exportResumeJsonBtn = document.getElementById("exportResumeJsonBtn");
+const importResumeJsonBtn = document.getElementById("importResumeJsonBtn");
+const importResumeJsonFileEl = document.getElementById("importResumeJsonFile");
 
 const templateNameModal = document.getElementById("templateNameModal");
 const templateNameModalTitle = document.getElementById("templateNameModalTitle");
@@ -139,6 +142,12 @@ function initTemplateEvents() {
     importTemplatesFileEl.click();
   });
   importTemplatesFileEl.addEventListener("change", handleImportTemplates);
+  exportResumeJsonBtn.addEventListener("click", handleExportResumeJson);
+  importResumeJsonBtn.addEventListener("click", () => {
+    importResumeJsonFileEl.value = "";
+    importResumeJsonFileEl.click();
+  });
+  importResumeJsonFileEl.addEventListener("change", handleImportResumeJson);
 
   closeTemplateNameBtn.addEventListener("click", closeTemplateNameModal);
   closeTemplateNameBackdrop.addEventListener("click", closeTemplateNameModal);
@@ -264,6 +273,35 @@ async function handleImportTemplates() {
     updatePageStatus("error", `导入失败：${error.message}`);
   } finally {
     importTemplatesFileEl.value = "";
+  }
+}
+
+async function handleExportResumeJson() {
+  await persistResumeProfile({ silent: true });
+  const payload = await resumeStorage.exportActiveTemplateData();
+  const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = `标准简历-${new Date().toISOString().slice(0, 10)}.json`;
+  anchor.click();
+  URL.revokeObjectURL(url);
+  updatePageStatus("success", "已导出当前标准简历 JSON");
+}
+
+async function handleImportResumeJson() {
+  const file = importResumeJsonFileEl.files?.[0];
+  if (!file) return;
+  if (!window.confirm("导入会覆盖当前模板内容，确定继续吗？")) return;
+  try {
+    const data = JSON.parse(await readFileAsText(file));
+    await resumeStorage.importActiveTemplateData(data);
+    await loadResumeProfile();
+    updatePageStatus("success", "已导入当前标准简历 JSON");
+  } catch (error) {
+    updatePageStatus("error", `简历 JSON 导入失败：${error.message}`);
+  } finally {
+    importResumeJsonFileEl.value = "";
   }
 }
 
