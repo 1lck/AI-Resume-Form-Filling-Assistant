@@ -4,6 +4,11 @@ body.resume-editor-page {
   min-height: 100vh;
 }
 
+/* 编辑器页面 body 可滚动，弹窗需固定在视口上 */
+.resume-editor-page .modal {
+  position: fixed;
+}
+
 .editor-shell {
   max-width: 1360px;
   margin: 0 auto;
@@ -65,6 +70,28 @@ body.resume-editor-page {
   display: flex;
   gap: 10px;
   flex-shrink: 0;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.editor-toolbar .template-select {
+  width: auto;
+  min-width: 180px;
+  max-width: 260px;
+  flex: 1 1 180px;
+  padding: 9px 11px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  font-size: 13px;
+  color: var(--text-main);
+  background: #ffffff;
+  cursor: pointer;
+}
+
+.editor-toolbar .template-select:focus {
+  outline: none;
+  border-color: var(--text-main);
+  box-shadow: 0 0 0 2px rgba(24, 24, 27, 0.1);
 }
 
 /* ─── Status Bar ─────────────────────────────────────────────────────────── */

@@ -1147,3 +1147,57 @@ body {
 ::-webkit-scrollbar-thumb:hover {
   background: var(--text-light);
 }
+
+/* Template selector & manager */
+.template-bar {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.template-bar label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+
+.template-select {
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  font-size: 13px;
+  color: var(--text-main);
+  background: var(--bg-app);
+  transition: all 0.2s;
+  cursor: pointer;
+}
+
+.template-select:focus {
+  outline: none;
+  border-color: var(--text-main);
+  box-shadow: 0 0 0 1px var(--text-main);
+}
+
+.template-manager {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--bg-card);
+}
+
+.template-manager-row {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.template-manager-row .btn {
+  flex: 1;
+  padding: 8px 10px;
+  font-size: 12px;
+  white-space: nowrap;
+}

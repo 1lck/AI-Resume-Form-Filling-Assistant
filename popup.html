@@ -50,6 +50,11 @@
         </div>
 
         <section class="tab-panel active" id="tab-fill">
+          <div class="template-bar">
+            <label for="fillTemplateSelect">简历模板（本次填充使用）</label>
+            <select id="fillTemplateSelect" class="template-select"></select>
+          </div>
+
           <div class="stats-grid stats-grid-3">
             <div class="stat-card">
               <span class="stat-value" id="fieldCount">0</span>
@@ -97,6 +102,27 @@
         </section>
 
         <section class="tab-panel" id="tab-resume">
+          <div class="template-manager">
+            <div class="section-header section-header-normal">
+              <span>简历模板</span>
+            </div>
+            <select id="resumeTemplateSelect" class="template-select"></select>
+            <div class="template-manager-row">
+              <button class="btn btn-outline btn-sm" id="newTemplateBtn" title="新建一个空白简历模板">新建</button>
+              <button class="btn btn-outline btn-sm" id="duplicateTemplateBtn" title="复制当前模板">复制</button>
+              <button class="btn btn-outline btn-sm" id="renameTemplateBtn" title="重命名当前模板">重命名</button>
+              <button class="btn btn-outline btn-sm" id="deleteTemplateBtn" title="删除当前模板">删除</button>
+            </div>
+            <div class="template-manager-row">
+              <button class="btn btn-outline btn-sm" id="exportTemplatesBtn" title="导出全部模板为 JSON 备份">导出</button>
+              <button class="btn btn-outline btn-sm" id="importTemplatesBtn" title="从 JSON 备份导入（覆盖当前模板）">导入</button>
+            </div>
+            <input type="file" id="importTemplatesFile" accept="application/json" hidden />
+            <div class="tip">
+              每个模板是一份独立的标准简历。基础信息相近时，可“复制当前”后只改侧重点（如测开 / 游戏开发 / 普通开发）。填充前在上方“自动填充”页切换模板即可。
+            </div>
+          </div>
+
           <div class="section-block">
             <div class="section-header section-header-normal">
               <span>简历配置</span>
@@ -298,6 +324,45 @@
           </div>
           <div class="modal-footer">
             <button class="btn btn-primary btn-block" id="saveModelBtn">保存</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="modal" id="templateNameModal">
+        <div class="modal-backdrop" id="closeTemplateNameBackdrop"></div>
+        <div class="modal-content">
+          <div class="modal-header">
+            <h3 id="templateNameModalTitle">新建模板</h3>
+            <button class="icon-btn" id="closeTemplateNameBtn">
+              <svg
+                width="20"
+                height="20"
+                fill="none"
+                viewBox="0 0 24 24"
+                stroke="currentColor"
+              >
+                <path
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  stroke-width="2"
+                  d="M6 18L18 6M6 6l12 12"
+                />
+              </svg>
+            </button>
+          </div>
+          <div class="modal-body">
+            <div class="form-group">
+              <label for="templateNameInput">模板名称</label>
+              <input
+                type="text"
+                id="templateNameInput"
+                placeholder="例如：测开 / 游戏开发 / 普通开发"
+              />
+            </div>
+            <div class="config-status" id="templateNameStatus"></div>
+          </div>
+          <div class="modal-footer">
+            <button class="btn btn-primary btn-block" id="saveTemplateNameBtn">保存</button>
           </div>
         </div>
       </div>

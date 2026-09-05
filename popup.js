@@ -35,6 +35,24 @@ const importResumeBtn = document.getElementById("importResumeBtn");
 const uploadPdfBtn = document.getElementById("uploadPdfBtn");
 const resumePdfFileEl = document.getElementById("resumePdfFile");
 
+const fillTemplateSelect = document.getElementById("fillTemplateSelect");
+const resumeTemplateSelect = document.getElementById("resumeTemplateSelect");
+const newTemplateBtn = document.getElementById("newTemplateBtn");
+const duplicateTemplateBtn = document.getElementById("duplicateTemplateBtn");
+const renameTemplateBtn = document.getElementById("renameTemplateBtn");
+const deleteTemplateBtn = document.getElementById("deleteTemplateBtn");
+const exportTemplatesBtn = document.getElementById("exportTemplatesBtn");
+const importTemplatesBtn = document.getElementById("importTemplatesBtn");
+const importTemplatesFileEl = document.getElementById("importTemplatesFile");
+
+const templateNameModal = document.getElementById("templateNameModal");
+const templateNameModalTitle = document.getElementById("templateNameModalTitle");
+const templateNameInput = document.getElementById("templateNameInput");
+const templateNameStatus = document.getElementById("templateNameStatus");
+const saveTemplateNameBtn = document.getElementById("saveTemplateNameBtn");
+const closeTemplateNameBtn = document.getElementById("closeTemplateNameBtn");
+const closeTemplateNameBackdrop = document.getElementById("closeTemplateNameBackdrop");
+
 const logContent = document.getElementById("logContent");
 const clearLogBtn = document.getElementById("clearLog");
 const selectLogDirectoryBtn = document.getElementById("selectLogDirectoryBtn");
@@ -99,9 +117,10 @@ if (!contentBridge) {
   throw new Error("Resume content bridge is not available");
 }
 
-const RESUME_PROFILE_KEY = resumeStorage.keys.profile;
-const RESUME_SCHEMA_VERSION_KEY = resumeStorage.keys.schemaVersion;
-const RESUME_IMPORT_RAW_TEXT_KEY = resumeStorage.keys.rawText;
+const RESUME_TEMPLATES_KEY = resumeStorage.keys.templates;
+const RESUME_ACTIVE_TEMPLATE_KEY = resumeStorage.keys.activeTemplateId;
+const RESUME_LEGACY_PROFILE_KEY = resumeStorage.keys.profile;
+const RESUME_LEGACY_RAW_TEXT_KEY = resumeStorage.keys.rawText;
 const MAPPING_CACHE_KEY = "fieldMappingCacheV3";
 
 const BUILTIN_MODEL = modelStorage.DEFAULT_MODEL;
@@ -111,6 +130,10 @@ let isFilling = false;
 let isImporting = false;
 let isResumeDirty = false;
 let resumeProfile = schema.createEmptyResumeProfile();
+let templates = [];
+let activeTemplateId = null;
+let isLoadingResume = false;
+let templateNameMode = null;
 const collapsedResumeSections = new Set();
 let logProjectRootHandle = null;
 let activeFillSession = null;
@@ -150,6 +173,7 @@ document.addEventListener("DOMContentLoaded", async () => {
   initModalEvents();
   initLogExportEvents();
   initResumeEditorEvents();
+  initTemplateEvents();
   await initModels();
   await refreshLogExportStatus();
   await loadResumeProfile();
@@ -159,10 +183,10 @@ document.addEventListener("DOMContentLoaded", async () => {
 chrome.storage.onChanged.addListener((changes, areaName) => {
   if (areaName !== "local" && areaName !== "sync") return;
   if (
-    !changes[RESUME_PROFILE_KEY] &&
-    !changes[RESUME_IMPORT_RAW_TEXT_KEY] &&
-    !changes.resumeStructured &&
-    !changes.resumeRawText
+    !changes[RESUME_TEMPLATES_KEY] &&
+    !changes[RESUME_ACTIVE_TEMPLATE_KEY] &&
+    !changes[RESUME_LEGACY_PROFILE_KEY] &&
+    !changes[RESUME_LEGACY_RAW_TEXT_KEY]
   ) {
     return;
   }
@@ -642,21 +666,230 @@ function initResumeEditorEvents() {
   });
 }
 
+function initTemplateEvents() {
+  fillTemplateSelect.addEventListener("change", () => {
+    switchActiveTemplate(fillTemplateSelect.value);
+  });
+
+  resumeTemplateSelect.addEventListener("change", () => {
+    switchActiveTemplate(resumeTemplateSelect.value);
+  });
+
+  newTemplateBtn.addEventListener("click", () => openTemplateNameModal("create"));
+  duplicateTemplateBtn.addEventListener("click", handleDuplicateTemplate);
+  renameTemplateBtn.addEventListener("click", () => openTemplateNameModal("rename"));
+  deleteTemplateBtn.addEventListener("click", handleDeleteTemplate);
+
+  exportTemplatesBtn.addEventListener("click", handleExportTemplates);
+  importTemplatesBtn.addEventListener("click", () => {
+    importTemplatesFileEl.value = "";
+    importTemplatesFileEl.click();
+  });
+  importTemplatesFileEl.addEventListener("change", handleImportTemplates);
+
+  closeTemplateNameBtn.addEventListener("click", closeTemplateNameModal);
+  closeTemplateNameBackdrop.addEventListener("click", closeTemplateNameModal);
+  saveTemplateNameBtn.addEventListener("click", handleSaveTemplateName);
+  templateNameInput.addEventListener("keydown", (event) => {
+    if (event.key === "Enter") {
+      handleSaveTemplateName();
+    }
+  });
+}
+
+function renderTemplateSelectors() {
+  const options = templates
+    .map(
+      (template) =>
+        `<option value="${escapeHtml(template.id)}">${escapeHtml(
+          template.name
+        )}</option>`
+    )
+    .join("");
+
+  fillTemplateSelect.innerHTML = options;
+  resumeTemplateSelect.innerHTML = options;
+  fillTemplateSelect.value = activeTemplateId;
+  resumeTemplateSelect.value = activeTemplateId;
+}
+
+async function switchActiveTemplate(id) {
+  if (!id || id === activeTemplateId) return;
+
+  if (isResumeDirty) {
+    await persistResumeProfile({ silent: true });
+  }
+
+  await resumeStorage.setActiveTemplateId(id);
+  await loadResumeProfile();
+  updateStartFillAvailability();
+}
+
+function openTemplateNameModal(mode) {
+  templateNameMode = mode;
+
+  if (mode === "rename") {
+    const current = templates.find((template) => template.id === activeTemplateId);
+    templateNameInput.value = current?.name || "";
+    templateNameModalTitle.textContent = "重命名模板";
+  } else {
+    templateNameInput.value = "";
+    templateNameModalTitle.textContent = "新建模板";
+  }
+
+  templateNameStatus.textContent = "";
+  templateNameStatus.className = "config-status";
+  templateNameModal.classList.add("open");
+  setTimeout(() => templateNameInput.focus(), 50);
+}
+
+function closeTemplateNameModal() {
+  templateNameModal.classList.remove("open");
+  templateNameMode = null;
+}
+
+async function handleSaveTemplateName() {
+  const name = templateNameInput.value.trim();
+  if (!name) {
+    templateNameStatus.textContent = "名称不能为空";
+    templateNameStatus.className = "config-status error";
+    return;
+  }
+
+  saveTemplateNameBtn.disabled = true;
+  try {
+    if (templateNameMode === "rename") {
+      await resumeStorage.renameTemplate(activeTemplateId, name);
+      templates = templates.map((template) =>
+        template.id === activeTemplateId ? { ...template, name } : template
+      );
+      renderTemplateSelectors();
+      addLog("success", "已重命名模板");
+    } else {
+      if (isResumeDirty) {
+        await persistResumeProfile({ silent: true });
+      }
+      const template = await resumeStorage.createTemplate(name);
+      await resumeStorage.setActiveTemplateId(template.id);
+      await loadResumeProfile();
+      updateStartFillAvailability();
+      addLog("success", `已新建模板：${template.name}`);
+    }
+    closeTemplateNameModal();
+  } catch (error) {
+    templateNameStatus.textContent = error.message;
+    templateNameStatus.className = "config-status error";
+  } finally {
+    saveTemplateNameBtn.disabled = false;
+  }
+}
+
+async function handleExportTemplates() {
+  const payload = await resumeStorage.exportTemplateData();
+  const blob = new Blob([JSON.stringify(payload, null, 2)], {
+    type: "application/json",
+  });
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = `简历模板备份-${new Date().toISOString().slice(0, 10)}.json`;
+  anchor.click();
+  URL.revokeObjectURL(url);
+  addLog("success", `已导出 ${payload.templates.length} 个简历模板`);
+}
+
+async function handleImportTemplates() {
+  const file = importTemplatesFileEl.files?.[0];
+  if (!file) return;
+
+  if (!window.confirm("导入会覆盖当前所有简历模板，确定继续吗？")) {
+    importTemplatesFileEl.value = "";
+    return;
+  }
+
+  try {
+    const text = await readFileAsText(file);
+    const data = JSON.parse(text);
+    const result = await resumeStorage.importTemplateData(data);
+    await loadResumeProfile();
+    updateStartFillAvailability();
+    addLog("success", `已导入 ${result.templates.length} 个简历模板`);
+  } catch (error) {
+    addLog("error", `导入失败：${error.message}`);
+  } finally {
+    importTemplatesFileEl.value = "";
+  }
+}
+
+function readFileAsText(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result || ""));
+    reader.onerror = () => reject(new Error("文件读取失败"));
+    reader.readAsText(file);
+  });
+}
+
+async function handleDuplicateTemplate() {
+  if (isResumeDirty) {
+    await persistResumeProfile({ silent: true });
+  }
+
+  try {
+    const template = await resumeStorage.duplicateTemplate(activeTemplateId);
+    await resumeStorage.setActiveTemplateId(template.id);
+    await loadResumeProfile();
+    updateStartFillAvailability();
+    addLog("success", `已复制为模板：${template.name}`);
+  } catch (error) {
+    addLog("error", `复制失败：${error.message}`);
+  }
+}
+
+async function handleDeleteTemplate() {
+  if (templates.length <= 1) {
+    addLog("warning", "至少保留一个模板");
+    return;
+  }
+
+  const current = templates.find((template) => template.id === activeTemplateId);
+  if (!window.confirm(`确定删除模板「${current?.name || ""}」吗？此操作不可恢复。`)) {
+    return;
+  }
+
+  activeTemplateId = await resumeStorage.deleteTemplate(activeTemplateId);
+  await loadResumeProfile();
+  updateStartFillAvailability();
+  addLog("success", "已删除模板");
+}
+
 function resetCollapsedResumeSections() {
   collapsedResumeSections.clear();
   schema.sections.forEach((section) => collapsedResumeSections.add(section.key));
 }
 
 async function loadResumeProfile() {
-  const data = await resumeStorage.loadResumeData();
-  const sourceProfile = data.profile;
+  if (isLoadingResume) return;
+  isLoadingResume = true;
 
-  resumeProfile = schema.normalizeResumeProfile(sourceProfile);
-  resumeImportTextEl.value = data.rawText;
-  resetCollapsedResumeSections();
-  renderResumeEditor(resumeProfile);
-  isResumeDirty = false;
-  saveResumeBtn.disabled = true;
+  try {
+    const state = await resumeStorage.loadTemplateState();
+    templates = state.templates;
+    activeTemplateId = state.activeTemplateId;
+    renderTemplateSelectors();
+
+    const active = state.templates.find(
+      (template) => template.id === state.activeTemplateId
+    );
+    resumeProfile = schema.normalizeResumeProfile(active?.profile || {});
+    resumeImportTextEl.value = active?.rawText || "";
+    resetCollapsedResumeSections();
+    renderResumeEditor(resumeProfile);
+    isResumeDirty = false;
+    saveResumeBtn.disabled = true;
+  } finally {
+    isLoadingResume = false;
+  }
 }
 
 function renderResumeEditor(profile) {
@@ -1070,7 +1303,7 @@ async function persistResumeProfile({ silent = false } = {}) {
   const nextProfile = collectResumeProfileFromForm();
 
   resumeProfile = nextProfile;
-  await resumeStorage.saveResumeData({
+  await resumeStorage.saveTemplateContent(activeTemplateId, {
     profile: nextProfile,
     schemaVersion: schema.version,
     rawText: resumeImportTextEl.value.trim(),
@@ -1125,7 +1358,7 @@ resumePdfFileEl.addEventListener("change", async () => {
     }
 
     resumeImportTextEl.value = text;
-    await resumeStorage.saveRawText(text);
+    await resumeStorage.saveTemplateContent(activeTemplateId, { rawText: text });
 
     addLog("success", "PDF 文本提取完成，开始导入到标准简历...");
     await importResumeToSchema(text);
@@ -1170,7 +1403,7 @@ async function importResumeToSchema(rawText) {
     const normalized = schema.normalizeResumeProfile(parsed);
 
     resumeProfile = normalized;
-    await resumeStorage.saveResumeData({
+    await resumeStorage.saveTemplateContent(activeTemplateId, {
       profile: normalized,
       schemaVersion: schema.version,
       rawText: text,
