@@ -117,7 +117,12 @@
               <button class="btn btn-outline btn-sm" id="exportTemplatesBtn" title="导出全部模板为 JSON 备份">导出</button>
               <button class="btn btn-outline btn-sm" id="importTemplatesBtn" title="从 JSON 备份导入（覆盖当前模板）">导入</button>
             </div>
+            <div class="template-manager-row">
+              <button class="btn btn-outline btn-sm" id="exportResumeJsonBtn" title="导出当前标准简历 JSON">导出当前简历</button>
+              <button class="btn btn-outline btn-sm" id="importResumeJsonBtn" title="导入标准简历 JSON 到当前模板">导入当前简历</button>
+            </div>
             <input type="file" id="importTemplatesFile" accept="application/json" hidden />
+            <input type="file" id="importResumeJsonFile" accept="application/json" hidden />
             <div class="tip">
               每个模板是一份独立的标准简历。基础信息相近时，可“复制当前”后只改侧重点（如测开 / 游戏开发 / 普通开发）。填充前在上方“自动填充”页切换模板即可。
             </div>

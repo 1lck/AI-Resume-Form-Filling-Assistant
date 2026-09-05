@@ -250,6 +250,26 @@ test("import rejects malformed data and falls back to a default template", async
   assert.equal(result.activeTemplateId, result.templates[0].id);
 });
 
+test("single resume JSON export and import round-trip the active template", async () => {
+  const resumeStorage = loadResumeStorage();
+  const fake = createStorage();
+  const state = await resumeStorage.loadTemplateState(fake.storage);
+  await resumeStorage.saveTemplateContent(state.activeTemplateId, {
+    profile: { personal: { fullName: "张三" } },
+    rawText: "简历原文",
+    schemaVersion: 7,
+  }, fake.storage);
+
+  const payload = await resumeStorage.exportActiveTemplateData(fake.storage);
+  assert.equal(payload.kind, "resume-profile");
+  assert.equal(payload.profile.personal.fullName, "张三");
+
+  const fake2 = createStorage();
+  const imported = await resumeStorage.importActiveTemplateData(payload, fake2.storage);
+  assert.equal(imported.profile.personal.fullName, "张三");
+  assert.equal(imported.rawText, "简历原文");
+});
+
 test("both resume entry points use the shared local storage helper", () => {
   const popupHtml = fs.readFileSync(path.join(__dirname, "../popup.html"), "utf8");
   const editorHtml = fs.readFileSync(

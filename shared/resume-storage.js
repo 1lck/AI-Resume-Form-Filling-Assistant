@@ -424,6 +424,56 @@
     return { templates, activeTemplateId };
   }
 
+  async function exportActiveTemplateData(storageOverride) {
+    const state = await loadTemplateState(storageOverride);
+    const active = state.templates.find(
+      (template) => template.id === state.activeTemplateId
+    );
+    return {
+      app: "ai-resume-form-filling-assistant",
+      kind: "resume-profile",
+      version: 1,
+      exportedAt: nowIso(),
+      name: active?.name || DEFAULT_TEMPLATE_NAME,
+      profile: clone(active?.profile || {}),
+      rawText: active?.rawText || "",
+      schemaVersion: active?.schemaVersion,
+    };
+  }
+
+  async function importActiveTemplateData(data, storageOverride) {
+    const storage = getStorage(storageOverride);
+    const source =
+      data?.kind === "resume-profile" ? data :
+      data?.template && typeof data.template === "object" ? data.template :
+      data;
+    if (!source || typeof source !== "object" || Array.isArray(source)) {
+      throw new Error("导入文件格式不正确：缺少 profile");
+    }
+    const profile =
+      source.profile && typeof source.profile === "object" && !Array.isArray(source.profile)
+        ? source.profile
+        : null;
+    if (!profile) throw new Error("导入文件格式不正确：缺少 profile");
+
+    const state = await loadTemplateState(storage);
+    const active = state.templates.find(
+      (template) => template.id === state.activeTemplateId
+    );
+    const next = {
+      ...(active || buildEmptyTemplate(state.activeTemplateId, DEFAULT_TEMPLATE_NAME)),
+      profile: clone(profile),
+      rawText: text(source.rawText),
+      schemaVersion: source.schemaVersion,
+      updatedAt: nowIso(),
+    };
+    const templates = state.templates.map((template) =>
+      template.id === state.activeTemplateId ? next : template
+    );
+    await persistTemplates(storage, templates, state.activeTemplateId);
+    return next;
+  }
+
   root.ResumeStorage = Object.freeze({
     keys,
     DEFAULT_TEMPLATE_ID,
@@ -436,5 +486,7 @@
     setActiveTemplateId,
     exportTemplateData,
     importTemplateData,
+    exportActiveTemplateData,
+    importActiveTemplateData,
   });
 })(typeof window !== "undefined" ? window : globalThis);

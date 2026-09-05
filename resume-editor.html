@@ -25,6 +25,8 @@
           <button class="btn btn-outline btn-sm" id="deleteTemplateBtn" title="删除当前模板">删除</button>
           <button class="btn btn-outline btn-sm" id="exportTemplatesBtn" title="导出全部模板为 JSON 备份">导出</button>
           <button class="btn btn-outline btn-sm" id="importTemplatesBtn" title="从 JSON 备份导入（覆盖当前模板）">导入</button>
+          <button class="btn btn-outline btn-sm" id="exportResumeJsonBtn" title="导出当前标准简历 JSON">导出当前简历</button>
+          <button class="btn btn-outline btn-sm" id="importResumeJsonBtn" title="导入标准简历 JSON 到当前模板">导入当前简历</button>
           <button class="btn btn-outline" id="reloadResumeBtn">重新加载</button>
           <button class="btn btn-primary" id="saveResumeBtn">保存标准简历</button>
         </div>
@@ -65,6 +67,7 @@
     </div>
 
     <input type="file" id="importTemplatesFile" accept="application/json" hidden />
+    <input type="file" id="importResumeJsonFile" accept="application/json" hidden />
 
     <div class="modal" id="templateNameModal">
       <div class="modal-backdrop" id="closeTemplateNameBackdrop"></div>
