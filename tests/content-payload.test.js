@@ -30,7 +30,7 @@ function loadPayloadHelpers() {
     const document = { title: "Example Form" };
     ${extractFunction(
       contentSource,
-      "function buildFieldMappingPayload(fields, resumeProfile) {",
+      "function buildFieldMappingPayload(fields, resumeProfile, targetSlotIndex = null) {",
       "function normalizeMappings(rawMappings, fields) {"
     )}
     module.exports = {
@@ -69,4 +69,23 @@ test("buildFieldMappingPayload only includes resume fields with values", () => {
   assert.equal(payload.resumeFields.length, 2);
   assert.deepEqual(paths, ["personal.email", "personal.fullName"]);
   assert.ok(payload.resumeFields.every((field) => field.hasValue === true));
+});
+
+test("buildFieldMappingPayload restricts list sections to the requested slot when targetSlotIndex is set", () => {
+  const helpers = loadPayloadHelpers();
+  const profile = helpers.schema.createEmptyResumeProfile({ mode: "max" });
+  profile.personal.fullName = "张三";
+  profile.workExperiences[0].company = "第一家公司";
+  profile.workExperiences[1].company = "第二家公司";
+
+  const payload = helpers.buildFieldMappingPayload(
+    [{ fieldId: "f_1", label: "工作单位", kind: "text" }],
+    profile,
+    1
+  );
+  const paths = JSON.parse(
+    JSON.stringify(payload.resumeFields.map((field) => field.path).sort())
+  );
+
+  assert.deepEqual(paths, ["personal.fullName", "workExperiences.1.company"]);
 });

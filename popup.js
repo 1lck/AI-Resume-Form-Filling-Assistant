@@ -37,6 +37,7 @@ const resumePdfFileEl = document.getElementById("resumePdfFile");
 
 const fillTemplateSelect = document.getElementById("fillTemplateSelect");
 const resumeTemplateSelect = document.getElementById("resumeTemplateSelect");
+const targetSlotSelect = document.getElementById("targetSlotSelect");
 const newTemplateBtn = document.getElementById("newTemplateBtn");
 const duplicateTemplateBtn = document.getElementById("duplicateTemplateBtn");
 const renameTemplateBtn = document.getElementById("renameTemplateBtn");
@@ -133,9 +134,12 @@ let isFilling = false;
 let isImporting = false;
 let isResumeDirty = false;
 let resumeProfile = schema.createEmptyResumeProfile();
+// 已保存到存储的简历快照；填充和选区目标下拉框只认这一份，未保存的编辑不生效。
+let savedResumeProfile = schema.createEmptyResumeProfile();
 let templates = [];
 let activeTemplateId = null;
 let isLoadingResume = false;
+let resumeLoadRequestId = 0;
 let templateNameMode = null;
 const collapsedResumeSections = new Set();
 let logProjectRootHandle = null;
@@ -171,6 +175,116 @@ const FILL_ACTIONS = {
   },
 };
 
+const TARGET_SLOT_TITLE_KEYS = ["school", "company", "name", "activityName", "programName"];
+const TARGET_SLOT_SKIPPED_SECTIONS = new Set(["familyMembers"]);
+const TARGET_SLOT_OPTION_EXTRA_PADDING = 12; // 原生下拉列表自带的内边距和边框，留点余量
+let textMeasureContext = null;
+
+// 原生 <select> 的选项不支持 CSS 省略号，只能用 canvas 按真实字体量像素宽度来截断。
+function truncateToPixelWidth(text, maxWidth, font) {
+  if (!textMeasureContext) {
+    textMeasureContext = document.createElement("canvas").getContext("2d");
+  }
+  textMeasureContext.font = font;
+  const measure = (value) => textMeasureContext.measureText(value).width;
+  if (measure(text) <= maxWidth) return text;
+
+  const chars = Array.from(text);
+  let low = 0;
+  let high = chars.length;
+  // 二分查找能放下“前缀 + …”的最长前缀
+  while (low < high) {
+    const mid = Math.ceil((low + high) / 2);
+    if (measure(`${chars.slice(0, mid).join("")}…`) <= maxWidth) {
+      low = mid;
+    } else {
+      high = mid - 1;
+    }
+  }
+  return `${chars.slice(0, low).join("").replace(/[\s/]+$/, "")}…`;
+}
+
+// 按下拉框当前宽度重新截断选项文字；下拉框不可见（宽度为 0）时先显示全文，等可见后再截。
+function fitTargetSlotOptionLabels() {
+  if (!targetSlotSelect) return;
+  const style = getComputedStyle(targetSlotSelect);
+  const maxWidth =
+    targetSlotSelect.clientWidth -
+    parseFloat(style.paddingLeft) * 2 -
+    TARGET_SLOT_OPTION_EXTRA_PADDING;
+
+  for (const option of targetSlotSelect.options) {
+    const fullText = option.dataset.fullText || option.textContent;
+    option.textContent =
+      maxWidth > 0 ? truncateToPixelWidth(fullText, maxWidth, style.font) : fullText;
+  }
+}
+
+function getTargetSlotItemTitle(item) {
+  if (!item || typeof item !== "object") return "";
+  for (const key of TARGET_SLOT_TITLE_KEYS) {
+    const value = String(item[key] || "").trim();
+    if (value) return value;
+  }
+  return "";
+}
+
+// “第 N 条”对应所有列表板块的第 N 项，把各板块第 N 项的名称拼成标签，方便辨认。
+function buildTargetSlotSummaries(profile) {
+  const summaries = [];
+  for (const section of schema.sections) {
+    if (section.type !== "list" || TARGET_SLOT_SKIPPED_SECTIONS.has(section.key)) continue;
+    const items = Array.isArray(profile?.[section.key]) ? profile[section.key] : [];
+    items.forEach((item, index) => {
+      const title = getTargetSlotItemTitle(item);
+      if (!title) return;
+      if (!summaries[index]) summaries[index] = [];
+      summaries[index].push(title);
+    });
+  }
+  return summaries;
+}
+
+function renderTargetSlotOptions(profile = savedResumeProfile) {
+  if (!targetSlotSelect) return;
+  const previousValue = targetSlotSelect.value;
+  const summaries = buildTargetSlotSummaries(profile);
+  const slotCount = Math.max(1, summaries.length);
+  const options = ['<option value="">自动匹配（默认）</option>'];
+  for (let index = 1; index <= slotCount; index += 1) {
+    const titles = summaries[index - 1] || [];
+    const fullText = titles.length ? `第 ${index} 条：${titles.join(" / ")}` : `第 ${index} 条`;
+    const escapedText = escapeHtml(fullText);
+    options.push(
+      `<option value="${index}" title="${escapedText}" data-full-text="${escapedText}">${escapedText}</option>`
+    );
+  }
+  targetSlotSelect.innerHTML = options.join("");
+  if (previousValue && Number(previousValue) <= slotCount) {
+    targetSlotSelect.value = previousValue;
+  }
+  fitTargetSlotOptionLabels();
+}
+
+// 展开前按当前宽度重算一次（切换标签页、侧边栏拉宽拉窄后宽度都会变）
+targetSlotSelect?.addEventListener("mousedown", fitTargetSlotOptionLabels);
+targetSlotSelect?.addEventListener("focus", fitTargetSlotOptionLabels);
+window.addEventListener("resize", fitTargetSlotOptionLabels);
+
+function applySavedResumeProfile(profile) {
+  savedResumeProfile = profile;
+  renderTargetSlotOptions(profile);
+  updateStartFillAvailability();
+}
+
+// 编辑中（未保存）时不重绘表单，但仍要跟上存储里的已保存版本（例如简历配置页刚保存）。
+async function refreshSavedResumeSnapshot() {
+  const state = await resumeStorage.loadTemplateState();
+  const active = state.templates.find((template) => template.id === activeTemplateId);
+  if (!active) return;
+  applySavedResumeProfile(schema.normalizeResumeProfile(active.profile || {}));
+}
+
 document.addEventListener("DOMContentLoaded", async () => {
   initTabs();
   initModalEvents();
@@ -195,6 +309,9 @@ chrome.storage.onChanged.addListener((changes, areaName) => {
   }
 
   if (isResumeDirty || isImporting || isFilling) {
+    refreshSavedResumeSnapshot().catch((error) => {
+      console.error("[popup] 同步已保存简历失败:", error);
+    });
     return;
   }
 
@@ -908,11 +1025,15 @@ function resetCollapsedResumeSections() {
 }
 
 async function loadResumeProfile() {
-  if (isLoadingResume) return;
+  const requestId = ++resumeLoadRequestId;
   isLoadingResume = true;
 
   try {
     const state = await resumeStorage.loadTemplateState();
+    // A newer loadResumeProfile() call started while this one was awaiting
+    // storage; applying this stale result would overwrite the newer one.
+    if (requestId !== resumeLoadRequestId) return;
+
     templates = state.templates;
     activeTemplateId = state.activeTemplateId;
     renderTemplateSelectors();
@@ -926,8 +1047,11 @@ async function loadResumeProfile() {
     renderResumeEditor(resumeProfile);
     isResumeDirty = false;
     saveResumeBtn.disabled = true;
+    applySavedResumeProfile(resumeProfile);
   } finally {
-    isLoadingResume = false;
+    if (requestId === resumeLoadRequestId) {
+      isLoadingResume = false;
+    }
   }
 }
 
@@ -1350,7 +1474,7 @@ async function persistResumeProfile({ silent = false } = {}) {
 
   isResumeDirty = false;
   saveResumeBtn.disabled = true;
-  updateStartFillAvailability();
+  applySavedResumeProfile(nextProfile);
 
   if (!silent) {
     addLog("success", "标准简历已保存");
@@ -1452,7 +1576,7 @@ async function importResumeToSchema(rawText) {
     renderResumeEditor(normalized);
     isResumeDirty = false;
     saveResumeBtn.disabled = true;
-    updateStartFillAvailability();
+    applySavedResumeProfile(normalized);
 
     addLog("success", "导入完成：已预填到标准简历，请检查后使用");
     updateStatus("ready", "就绪");
@@ -1543,14 +1667,14 @@ async function runFill(actionKey) {
     throw new Error(`未知填充动作：${actionKey}`);
   }
 
-  if (isResumeDirty) {
-    await persistResumeProfile({ silent: true });
-  }
-
-  if (!schema.hasAnyFilledField(resumeProfile)) {
-    addLog("warning", "请先在“标准简历”里填写至少一个字段");
+  if (!schema.hasAnyFilledField(savedResumeProfile)) {
+    addLog("warning", "请先在“标准简历”里填写并保存至少一个字段");
     switchTab("resume");
     return;
+  }
+
+  if (isResumeDirty) {
+    addLog("warning", "标准简历有未保存的修改，本次按上次保存的版本填充；如需使用新内容，请先点击保存。");
   }
 
   const activeModel = await getActiveModel();
@@ -1593,12 +1717,21 @@ async function runFill(actionKey) {
     }
 
     const modelId = activeModel.id;
+    // 目标经历只作用于选区填入；整页填充和增量填入始终按自动匹配处理。
+    const targetSlotIndex =
+      actionKey === "selection" && targetSlotSelect?.value
+        ? Number(targetSlotSelect.value) - 1
+        : null;
+    if (targetSlotIndex != null) {
+      addLog("info", `选区填入已限定：仅使用各经历列表的第 ${targetSlotIndex + 1} 条记录进行映射与填充。`);
+    }
     const response = await sendTabMessage(tab.id, {
       action: "startFill",
       modelId,
-      resumeProfile,
+      resumeProfile: savedResumeProfile,
       fillMode: actionConfig.fillMode,
       scope: actionConfig.scope,
+      targetSlotIndex,
     });
 
     if (!response?.success) {
@@ -1665,12 +1798,12 @@ function updateFillStats(fieldCount, mappedCount, filledCount) {
 }
 
 function updateStartFillAvailability() {
-  const hasData = schema.hasAnyFilledField(resumeProfile);
+  const hasData = schema.hasAnyFilledField(savedResumeProfile);
   updateFillActionButtons({ hasData, isRunning: isFilling });
 }
 
 function updateFillActionButtons({
-  hasData = schema.hasAnyFilledField(resumeProfile),
+  hasData = schema.hasAnyFilledField(savedResumeProfile),
   isRunning = isFilling,
   runningActionKey = "",
 } = {}) {
@@ -1698,7 +1831,7 @@ function updateFillActionButtons({
     const isCurrent = runningActionKey === item.key;
     item.button.disabled = !hasData || isRunning;
     if (!hasData) {
-      item.labelEl.textContent = "请先填写标准简历";
+      item.labelEl.textContent = "请先填写并保存标准简历";
     } else if (isCurrent && isRunning) {
       item.labelEl.textContent = config.runningText;
     } else {

@@ -343,8 +343,8 @@ body {
   display: flex;
   flex-direction: column;
   gap: 12px;
-  flex: 1;
-  min-height: 120px;
+  flex: 1 0 200px;
+  min-height: 200px;
 }
 
 .section-header {
@@ -399,7 +399,13 @@ body {
   flex-shrink: 0;
 }
 
-.log-msg { color: var(--text-secondary); }
+.log-msg {
+  color: var(--text-secondary);
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow-wrap: break-word;
+  word-break: break-word;
+}
 .log-success .log-msg { color: var(--success); }
 .log-error .log-msg { color: var(--danger); }
 .log-warning .log-msg { color: var(--warning); }
@@ -1163,7 +1169,7 @@ body {
 
 .template-select {
   width: 100%;
-  padding: 10px 12px;
+  padding: 10px 8px;
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
   font-size: 13px;
@@ -1171,6 +1177,48 @@ body {
   background: var(--bg-app);
   transition: all 0.2s;
   cursor: pointer;
+}
+
+/* 选区填入按钮 + 它专属的“指定填第几条”设置，组内间距小于按钮之间，表明两者是一组 */
+.selection-fill-group {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.selection-fill-option {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px 12px;
+  border-radius: var(--radius-lg);
+  background: var(--secondary);
+}
+
+.selection-fill-option label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-main);
+}
+
+.selection-fill-hint {
+  margin: 0;
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--text-secondary);
+}
+
+/* 放在按钮区里的下拉框，文字居中和按钮保持一致。
+   不加左侧内边距：展开的选项列表会继承它，导致每项左边留空。 */
+.template-select-centered {
+  text-align: center;
+  text-align-last: center;
+}
+
+/* 展开后的选项列表保持左对齐，长标签更好读 */
+.template-select-centered option {
+  text-align: left;
+  text-align-last: left;
 }
 
 .template-select:focus {

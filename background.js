@@ -80,9 +80,11 @@ async function callAI(modelId, prompt, mode) {
 
 校招场景优先级：
 1) 含“实习”“实习经历”“实习公司”“实习岗位”等语义时，优先映射到 internships.*，不要优先映射到 workExperiences.*
-2) 含“学生组织”“社团”“校园经历”“志愿服务”“科研助理”“班干部”“校园活动”等语义时，优先映射到 campusExperiences.*
+2) 含“学生组织”“社团”“校园经历”“志愿服务”“科研助理”“班干部”“校园活动”“校内实践”“社会实践”“实践经历”等语义时，优先映射到 campusExperiences.*；其中活动名称对应 campusExperiences.activityName
 3) 含“学历类型”“培养方式”“实验室”“领域方向”“导师”“学号”“班级”“学制”等语义时，优先映射到 educations.*
 4) 含“学校名称”“学院”“专业”“学历”“GPA”“排名”“论文”“毕业状态”等教育语义时，也优先映射到 educations.*
+5) 表格中出现“称谓”“与本人关系”“工作单位”“职务”且与“姓名”“联系方式”同行重复出现时，是家庭成员信息，优先映射到 familyMembers.*；表格有多行时按行顺序对应 familyMembers.0.*、familyMembers.1.* 等不同槽位，不要都映射到同一个槽位
+6) 含“培训经历”“培训项目”“培训计划”“培训内容”等语义时，优先映射到 trainingExperiences.*，不要映射到 educations.* 或 certificates.*
 
 保守规则：
 1) 如果页面字段只是状态性复选框，例如“没有实习经历”“无实习经历”“暂无项目经历”，只有在 resumeFields 中存在明确语义等价的布尔字段时才映射；否则返回空字符串

@@ -7,7 +7,7 @@ const vm = require("node:vm");
 function loadClickHelper() {
   const source = fs.readFileSync(path.join(__dirname, "../content.js"), "utf8");
   const start = source.indexOf("  function clickLikeUser(el) {");
-  const end = source.indexOf("  function parseDateParts(value) {", start);
+  const end = source.indexOf("  const MONTH_NAMES_EN_SHORT = [", start);
   const snippet = `
     function scrollIntoView() {}
     ${source.slice(start, end)}

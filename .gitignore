@@ -20,6 +20,7 @@ Thumbs.db
 *.p12
 *.pfx
 *.crx
+api.txt
 
 # Personal documents (avoid accidental commits)
 *.pdf

@@ -23,6 +23,13 @@
           <button class="btn btn-outline btn-sm" id="duplicateTemplateBtn" title="复制当前模板">复制</button>
           <button class="btn btn-outline btn-sm" id="renameTemplateBtn" title="重命名当前模板">重命名</button>
           <button class="btn btn-outline btn-sm" id="deleteTemplateBtn" title="删除当前模板">删除</button>
+          <button
+            class="btn btn-outline btn-sm"
+            id="pullSectionsBtn"
+            title="从其他模板挑选部分模块，或列表类模块里的具体某几条（如某一段工作经历）拉取过来，不影响当前模板的其他内容"
+          >
+            拉取模块
+          </button>
           <button class="btn btn-outline btn-sm" id="exportTemplatesBtn" title="导出全部模板为 JSON 备份">导出</button>
           <button class="btn btn-outline btn-sm" id="importTemplatesBtn" title="从 JSON 备份导入（覆盖当前模板）">导入</button>
           <button class="btn btn-outline btn-sm" id="exportResumeJsonBtn" title="导出当前标准简历 JSON">导出当前简历</button>
@@ -104,6 +111,51 @@
         </div>
         <div class="modal-footer">
           <button class="btn btn-primary btn-block" id="saveTemplateNameBtn">保存</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="modal" id="pullSectionsModal">
+      <div class="modal-backdrop" id="closePullSectionsBackdrop"></div>
+      <div class="modal-content">
+        <div class="modal-header">
+          <h3>从其他模板拉取模块</h3>
+          <button class="icon-btn" id="closePullSectionsBtn">
+            <svg
+              width="20"
+              height="20"
+              fill="none"
+              viewBox="0 0 24 24"
+              stroke="currentColor"
+            >
+              <path
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                stroke-width="2"
+                d="M6 18L18 6M6 6l12 12"
+              />
+            </svg>
+          </button>
+        </div>
+        <div class="modal-body">
+          <div class="form-group">
+            <label for="pullSourceTemplateSelect">从哪个模板拉取</label>
+            <select id="pullSourceTemplateSelect"></select>
+          </div>
+          <div class="form-group">
+            <label
+              >勾选要拉取的内容：整模块（如基本信息）会整体替换；列表类模块（如工作经历）可以只勾其中几条，追加到当前模板已有条目后面，不影响原有条目</label
+            >
+            <div class="pull-sections-actions">
+              <button type="button" class="btn-text" id="pullSectionsSelectAllBtn">全选</button>
+              <button type="button" class="btn-text" id="pullSectionsSelectNoneBtn">清空</button>
+            </div>
+            <div class="pull-sections-list" id="pullSectionsList"></div>
+          </div>
+          <div class="config-status" id="pullSectionsStatus"></div>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-primary btn-block" id="confirmPullSectionsBtn">拉取并保存</button>
         </div>
       </div>
     </div>

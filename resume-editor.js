@@ -28,6 +28,17 @@ const saveTemplateNameBtn = document.getElementById("saveTemplateNameBtn");
 const closeTemplateNameBtn = document.getElementById("closeTemplateNameBtn");
 const closeTemplateNameBackdrop = document.getElementById("closeTemplateNameBackdrop");
 
+const pullSectionsBtn = document.getElementById("pullSectionsBtn");
+const pullSectionsModal = document.getElementById("pullSectionsModal");
+const pullSourceTemplateSelect = document.getElementById("pullSourceTemplateSelect");
+const pullSectionsList = document.getElementById("pullSectionsList");
+const pullSectionsSelectAllBtn = document.getElementById("pullSectionsSelectAllBtn");
+const pullSectionsSelectNoneBtn = document.getElementById("pullSectionsSelectNoneBtn");
+const pullSectionsStatus = document.getElementById("pullSectionsStatus");
+const confirmPullSectionsBtn = document.getElementById("confirmPullSectionsBtn");
+const closePullSectionsBtn = document.getElementById("closePullSectionsBtn");
+const closePullSectionsBackdrop = document.getElementById("closePullSectionsBackdrop");
+
 const schema = window.ResumeSchema;
 if (!schema) {
   throw new Error("Resume schema is not available");
@@ -157,6 +168,14 @@ function initTemplateEvents() {
       handleSaveTemplateName();
     }
   });
+
+  pullSectionsBtn.addEventListener("click", openPullSectionsModal);
+  closePullSectionsBtn.addEventListener("click", closePullSectionsModal);
+  closePullSectionsBackdrop.addEventListener("click", closePullSectionsModal);
+  pullSourceTemplateSelect.addEventListener("change", renderPullSectionsList);
+  pullSectionsSelectAllBtn.addEventListener("click", () => setAllPullSectionCheckboxes(true));
+  pullSectionsSelectNoneBtn.addEventListener("click", () => setAllPullSectionCheckboxes(false));
+  confirmPullSectionsBtn.addEventListener("click", handleConfirmPullSections);
 }
 
 function renderTemplateSelectors() {
@@ -237,6 +256,216 @@ async function handleSaveTemplateName() {
     templateNameStatus.className = "config-status error";
   } finally {
     saveTemplateNameBtn.disabled = false;
+  }
+}
+
+function openPullSectionsModal() {
+  const otherTemplates = templates.filter((template) => template.id !== activeTemplateId);
+
+  pullSectionsStatus.textContent = "";
+  pullSectionsStatus.className = "config-status";
+
+  if (otherTemplates.length === 0) {
+    pullSourceTemplateSelect.innerHTML = "";
+    pullSourceTemplateSelect.disabled = true;
+    pullSectionsList.innerHTML = "";
+    confirmPullSectionsBtn.disabled = true;
+    pullSectionsStatus.textContent = "没有其他模板可以拉取，请先新建或复制一个模板。";
+    pullSectionsStatus.className = "config-status error";
+    pullSectionsModal.classList.add("open");
+    return;
+  }
+
+  pullSourceTemplateSelect.disabled = false;
+  confirmPullSectionsBtn.disabled = false;
+  pullSourceTemplateSelect.innerHTML = otherTemplates
+    .map(
+      (template) =>
+        `<option value="${escapeHtml(template.id)}">${escapeHtml(template.name)}</option>`
+    )
+    .join("");
+
+  renderPullSectionsList();
+  pullSectionsModal.classList.add("open");
+}
+
+function closePullSectionsModal() {
+  pullSectionsModal.classList.remove("open");
+}
+
+function buildPullItemSummary(section, item) {
+  const parts = [];
+  for (const field of section.fields) {
+    const value = item?.[field.key];
+    const text = typeof value === "string" ? value.trim() : value == null ? "" : String(value);
+    if (text) parts.push(text);
+    if (parts.length >= 2) break;
+  }
+  return parts.length ? parts.join(" · ") : "（未命名条目）";
+}
+
+function renderPullSectionsList() {
+  const sourceId = pullSourceTemplateSelect.value;
+  const sourceTemplate = templates.find((template) => template.id === sourceId);
+  const sourceProfile = schema.normalizeResumeProfile(sourceTemplate?.profile || {});
+  const stats = buildResumeSectionStats(sourceProfile);
+
+  pullSectionsList.innerHTML = schema.sections
+    .map((section) => {
+      if (section.type === "list") {
+        const items = Array.isArray(sourceProfile[section.key]) ? sourceProfile[section.key] : [];
+        const entries = items
+          .map((item, index) => ({ item, index }))
+          .filter(({ item }) => hasMeaningfulResumeValue(item));
+
+        const rows = entries.length
+          ? entries
+              .map(
+                ({ item, index }) => `
+                  <label class="pull-section-row pull-section-item-row">
+                    <input
+                      type="checkbox"
+                      data-section-key="${escapeHtml(section.key)}"
+                      data-item-index="${index}"
+                    />
+                    <span class="pull-section-row-label">${escapeHtml(
+                      buildPullItemSummary(section, item)
+                    )}</span>
+                  </label>
+                `
+              )
+              .join("")
+          : `<div class="pull-section-empty">源模板该模块暂无内容</div>`;
+
+        return `
+          <div class="pull-section-block">
+            <div class="pull-section-block-title">
+              <span>${escapeHtml(section.label)}</span>
+              <span class="pull-section-row-hint">源模板 ${entries.length} 条</span>
+            </div>
+            ${rows}
+          </div>
+        `;
+      }
+
+      const sectionStats = stats.get(section.key);
+      const hint = `源模板已填 ${sectionStats?.filledFields || 0}/${sectionStats?.totalFields || 0} 项`;
+      return `
+        <div class="pull-section-block">
+          <label class="pull-section-row">
+            <input type="checkbox" data-section-key="${escapeHtml(section.key)}" />
+            <span class="pull-section-row-label">${escapeHtml(section.label)}</span>
+            <span class="pull-section-row-hint">${escapeHtml(hint)}</span>
+          </label>
+        </div>
+      `;
+    })
+    .join("");
+}
+
+function setAllPullSectionCheckboxes(checked) {
+  pullSectionsList.querySelectorAll('input[type="checkbox"]').forEach((checkbox) => {
+    checkbox.checked = checked;
+  });
+}
+
+async function handleConfirmPullSections() {
+  const sourceId = pullSourceTemplateSelect.value;
+  const sourceTemplate = templates.find((template) => template.id === sourceId);
+  if (!sourceTemplate) {
+    pullSectionsStatus.textContent = "请选择一个来源模板";
+    pullSectionsStatus.className = "config-status error";
+    return;
+  }
+
+  const checkedBoxes = Array.from(
+    pullSectionsList.querySelectorAll('input[type="checkbox"]:checked')
+  );
+
+  if (checkedBoxes.length === 0) {
+    pullSectionsStatus.textContent = "请至少勾选一个模块或条目";
+    pullSectionsStatus.className = "config-status error";
+    return;
+  }
+
+  const groupKeys = [];
+  const listIndicesByKey = new Map();
+
+  for (const checkbox of checkedBoxes) {
+    const key = checkbox.dataset.sectionKey;
+    if (checkbox.dataset.itemIndex == null) {
+      groupKeys.push(key);
+    } else {
+      if (!listIndicesByKey.has(key)) listIndicesByKey.set(key, []);
+      listIndicesByKey.get(key).push(Number(checkbox.dataset.itemIndex));
+    }
+  }
+
+  confirmPullSectionsBtn.disabled = true;
+  try {
+    if (isResumeDirty) {
+      await persistResumeProfile({ silent: true });
+    }
+
+    const sourceProfile = schema.normalizeResumeProfile(sourceTemplate.profile || {});
+    const nextProfile = schema.clone(resumeProfile);
+    const summaryParts = [];
+    const overflowParts = [];
+
+    for (const key of groupKeys) {
+      nextProfile[key] = schema.clone(sourceProfile[key]);
+      summaryParts.push(schema.getSectionDefinition(key)?.label || key);
+    }
+
+    for (const [key, indices] of listIndicesByKey.entries()) {
+      const sectionDef = schema.getSectionDefinition(key);
+      const label = sectionDef?.label || key;
+      const maxSlots = Math.max(1, Number(sectionDef?.slots) || 1);
+      const initialItems = Math.min(maxSlots, Math.max(1, Number(sectionDef?.initialItems) || 1));
+
+      const existingItems = Array.isArray(nextProfile[key]) ? nextProfile[key] : [];
+      const keptExisting = existingItems.filter((item) => hasMeaningfulResumeValue(item));
+      const incoming = indices.map((index) => schema.clone(sourceProfile[key][index]));
+
+      const availableSlots = Math.max(0, maxSlots - keptExisting.length);
+      const accepted = incoming.slice(0, availableSlots);
+      const dropped = incoming.length - accepted.length;
+
+      const merged = [...keptExisting, ...accepted];
+      while (merged.length < initialItems) {
+        merged.push(schema.createEmptyListItem(key));
+      }
+      nextProfile[key] = merged;
+
+      summaryParts.push(`${label}（追加 ${accepted.length} 条）`);
+      if (dropped > 0) {
+        overflowParts.push(`${label} 有 ${dropped} 条因超出上限（最多 ${maxSlots} 条）未添加`);
+      }
+    }
+
+    resumeProfile = nextProfile;
+    await resumeStorage.saveTemplateContent(activeTemplateId, {
+      profile: resumeProfile,
+      schemaVersion: schema.version,
+      rawText: resumeImportTextEl.value.trim(),
+    });
+
+    resetCollapsedResumeSections();
+    renderResumeEditor(resumeProfile);
+    isResumeDirty = false;
+    saveResumeBtn.disabled = true;
+
+    let message = `已从「${sourceTemplate.name}」拉取并保存：${summaryParts.join("、")}。`;
+    if (overflowParts.length) {
+      message += ` 注意：${overflowParts.join("；")}。`;
+    }
+    updatePageStatus(overflowParts.length ? "warning" : "success", message);
+    closePullSectionsModal();
+  } catch (error) {
+    pullSectionsStatus.textContent = `拉取失败：${error.message}`;
+    pullSectionsStatus.className = "config-status error";
+  } finally {
+    confirmPullSectionsBtn.disabled = false;
   }
 }
 

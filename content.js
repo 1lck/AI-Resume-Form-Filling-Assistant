@@ -58,6 +58,9 @@
   const STRUCTURAL_CONTAINER_SELECTOR =
     '[class*="form"],[class*="Form"],[class*="field"],[class*="Field"],[class*="item"],[class*="Item"],[class*="row"],[class*="Row"],[class*="group"],[class*="Group"],[class*="cell"],[class*="Cell"],fieldset,section,article,tr,li,td,th,dl';
   const SELECTION_OVERLAY_ID = "ai-resume-fill-selection-overlay";
+  // 常见组件库日期控件的外层：antd(ant-picker)、element(el-date-editor)、iview/mtd(*-date-picker)。
+  const DATE_PICKER_WRAPPER_SELECTOR =
+    '[class*="date-picker"],[class*="datepicker"],[class*="DatePicker"],[class*="date-editor"],[class*="calendar"],[class*="Calendar"],.ant-picker';
   const SELECTION_BOX_ID = "ai-resume-fill-selection-box";
   const SELECTION_HINT_ID = "ai-resume-fill-selection-hint";
   const MIN_SELECTION_SIZE = 12;
@@ -103,11 +106,13 @@
     { patterns: ["项目", "产品"], sectionKey: "projects" },
     { patterns: ["证书", "认证", "资格", "等级"], sectionKey: "certificates" },
     { patterns: ["语言", "外语", "雅思", "托福", "cet"], sectionKey: "languages" },
-    { patterns: ["校园", "学生", "社团", "社会", "志愿", "科研", "组织"], sectionKey: "campusExperiences" },
+    { patterns: ["校园", "学生", "社团", "社会", "志愿", "科研", "组织", "校内实践", "实践经历", "校内活动"], sectionKey: "campusExperiences" },
+    { patterns: ["培训"], sectionKey: "trainingExperiences" },
     { patterns: ["技能", "特长", "编程", "工具"], sectionKey: "skills" },
     { patterns: ["偏好", "期望", "求职", "目标", "薪资"], sectionKey: "jobPreferences" },
-    { patterns: ["联系方式", "地址", "电话"], sectionKey: "contactAndLocation" },
-    { patterns: ["证件", "身份", "护照", "户口"], sectionKey: "identityAndAuthorization" },
+    { patterns: ["联系方式", "地址", "电话", "生源"], sectionKey: "contactAndLocation" },
+    { patterns: ["证件", "身份", "护照", "户口", "政治", "健康", "身高", "体重"], sectionKey: "identityAndAuthorization" },
+    { patterns: ["家庭成员", "家庭主要成员", "社会关系"], sectionKey: "familyMembers" },
     { patterns: ["补充", "其他", "备注", "说明"], sectionKey: "additional" },
   ];
 
@@ -148,6 +153,7 @@
     handleStartFill(message.modelId, message.resumeProfile, {
         fillMode: message.fillMode,
         scope: message.scope,
+        targetSlotIndex: message.targetSlotIndex,
       })
         .then((result) => sendResponse(result))
         .catch((error) =>
@@ -171,7 +177,17 @@
 
       const fillMode = request?.fillMode === "incremental" ? "incremental" : "overwrite";
       const scope = request?.scope === "selection" ? "selection" : "page";
+      const targetSlotIndex = Number.isInteger(request?.targetSlotIndex)
+        ? request.targetSlotIndex
+        : null;
       let selectionRect = null;
+
+      if (targetSlotIndex != null) {
+        sendLog(
+          "info",
+          `选区填入目标经历已限定：本次只使用各经历列表的第 ${targetSlotIndex + 1} 条记录。`
+        );
+      }
 
       if (scope === "selection") {
         sendLog("info", "已进入选区模式：请在页面上拖拽框选要填写的区域。");
@@ -228,7 +244,7 @@
       }
 
       const cacheSignature = createMappingCacheSignature(scan.fields);
-      const cacheKey = createMappingCacheKeyFromSignature(cacheSignature);
+      const cacheKey = createMappingCacheKeyFromSignature(cacheSignature, targetSlotIndex);
       let mappings = null;
       let cacheHit = false;
 
@@ -249,7 +265,7 @@
           `已识别 ${lastFieldCount} 个字段，正在调用 AI 建立字段映射...`
         );
 
-        const promptPayload = buildFieldMappingPayload(scan.fields, resumeProfile);
+        const promptPayload = buildFieldMappingPayload(scan.fields, resumeProfile, targetSlotIndex);
         const aiText = await aiClient.callAI(
           modelId,
           JSON.stringify(promptPayload),
@@ -344,7 +360,7 @@
           diagnostics.formatValueSummary(field, mapping, rawValue, finalValue)
         );
 
-        if (!hasMeaningfulFillValue(finalValue)) {
+        if (!hasSourceValue(finalValue)) {
           sendLog(
             "warning",
             diagnostics.formatSkipSummary(
@@ -596,10 +612,16 @@
     return totalClicked;
   }
 
-  function buildFieldMappingPayload(fields, resumeProfile) {
+  function buildFieldMappingPayload(fields, resumeProfile, targetSlotIndex = null) {
     const resumeFields = schema
       .getCatalogWithValues(resumeProfile)
       .filter((field) => field.hasValue)
+      .filter(
+        (field) =>
+          targetSlotIndex == null ||
+          field.slotIndex == null ||
+          field.slotIndex === targetSlotIndex
+      )
       .map((field) => ({
         path: field.path,
         label: field.label,
@@ -757,24 +779,13 @@
       .filter(Boolean);
   }
 
-  function hasMeaningfulFillValue(value) {
-    if (Array.isArray(value)) {
-      return value.some((item) => String(item || "").trim());
-    }
-
-    return String(value ?? "").trim().length > 0;
-  }
-
   function getDatePart(value, part) {
-    const text = String(value || "").trim();
-    if (!text) return "";
+    const parsed = fillRuntime.parseDateParts(value);
+    if (!parsed.year) return "";
 
-    const match = text.match(/^(\d{4})(?:-(\d{1,2}))?(?:-(\d{1,2}))?/);
-    if (!match) return "";
-
-    if (part === "year") return match[1] || "";
-    if (part === "month") return match[2] ? match[2].padStart(2, "0") : "";
-    return match[3] ? match[3].padStart(2, "0") : "";
+    if (part === "year") return String(parsed.year);
+    if (part === "month") return parsed.month ? String(parsed.month).padStart(2, "0") : "";
+    return parsed.day ? String(parsed.day).padStart(2, "0") : "";
   }
 
   function getPhonePart(value, part) {
@@ -1356,10 +1367,10 @@
       placeholder: el.getAttribute("placeholder") || "",
       context: semanticMeta?.context || "",
       nearbyLabels: semanticMeta?.nearbyLabels || [],
+      // 不用 [class*="date"] / [class*="picker"]：会命中 candidate-*、update、city-picker 这类无关类名。
       hasCalendarIcon: Boolean(
-        el.closest?.(
-          '[class*="picker"],[class*="Picker"],[class*="calendar"],[class*="Calendar"],[class*="date"],[class*="Date"]'
-        ) || el.parentElement?.querySelector?.(".mtdicon-calendar-o,[class*='calendar']")
+        el.closest?.(DATE_PICKER_WRAPPER_SELECTOR) ||
+          el.parentElement?.querySelector?.(".mtdicon-calendar-o,[class*='calendar'],[class*='Calendar']")
       ),
     };
   }
@@ -1745,17 +1756,11 @@
     if (!text) return "";
 
     if (runtime?.inputType === "date") {
-      if (/^\d{4}-\d{2}$/.test(text)) return `${text}-01`;
-      if (/^\d{4}$/.test(text)) return `${text}-01-01`;
-      if (/^\d{4}-\d{2}-\d{2}$/.test(text)) return text;
-      return "";
+      return fillRuntime.toDatePrecision(text, "day");
     }
 
     if (runtime?.inputType === "month") {
-      if (/^\d{4}-\d{2}-\d{2}$/.test(text)) return text.slice(0, 7);
-      if (/^\d{4}-\d{2}$/.test(text)) return text;
-      if (/^\d{4}$/.test(text)) return `${text}-01`;
-      return "";
+      return fillRuntime.toDatePrecision(text, "month");
     }
 
     return text;
@@ -1893,23 +1898,34 @@
   async function fillReadonlyDateRuntime(runtime, desired) {
     logDateFillStep(runtime, "开始", `目标值=${desired}`);
 
+    const panelsBeforeWrite = new Set(collectDatePanelCandidates());
     const directWriteOk = await setValueWithEvents(runtime.el, desired, runtime);
     if (directWriteOk) {
       logDateFillStep(runtime, "直接写入成功");
+      // 直接写入触发的 focus/change 事件，有些站点会借机自动弹出日历面板，这里只收起这次新弹出的面板。
+      // 不点“确定”：那会把面板里原有的（旧的/空的）选择提交上去，覆盖刚写入的值。
+      const strayPanel = findVisibleDatePanel(runtime.el, panelsBeforeWrite, { freshOnly: true });
+      if (strayPanel) {
+        await closeDatePanel(strayPanel, runtime.el, { confirm: false });
+      }
       return true;
     }
 
     logDateFillStep(runtime, "直接写入失败", "尝试打开日期面板");
 
-    const trigger = runtime.el.closest?.(".mtd-input-affix-wrapper") || runtime.el;
-    clickLikeUser(trigger);
-    await sleep(120);
+    const parsed = fillRuntime.parseDateParts(desired);
+    if (!parsed.year || !parsed.month) {
+      logDateFillStep(runtime, "解析目标日期失败", desired);
+      return false;
+    }
 
-    let panel = findVisibleDatePanel(runtime.el);
-    if (!panel) {
-      clickLikeUser(runtime.el);
+    const panelsBeforeOpen = new Set(collectDatePanelCandidates());
+    let panel = null;
+    for (const trigger of collectDateTriggerCandidates(runtime.el)) {
+      clickLikeUser(trigger);
       await sleep(120);
-      panel = findVisibleDatePanel(runtime.el);
+      panel = findVisibleDatePanel(runtime.el, panelsBeforeOpen);
+      if (panel) break;
     }
 
     if (!panel) {
@@ -1917,52 +1933,70 @@
       return false;
     }
 
-    const parsed = parseDateParts(desired);
-    if (!parsed.year || !parsed.month) {
-      logDateFillStep(runtime, "解析目标日期失败", desired);
-      return false;
-    }
+    // 每次点击后面板内容可能整体重渲染，统一通过这个函数拿最新的面板节点。
+    const getPanel = () => {
+      panel = findVisibleDatePanel(runtime.el, panelsBeforeOpen) || panel;
+      return panel;
+    };
 
-    logDateFillStep(
-      runtime,
-      "面板已打开",
-      `year=${parsed.year} month=${parsed.month} day=${parsed.day || 0}`
-    );
+    let panelClosed = false;
+    try {
+      logDateFillStep(
+        runtime,
+        "面板已打开",
+        `year=${parsed.year} month=${parsed.month} day=${parsed.day || 0}`
+      );
 
-    const yearReady = await movePickerToYear(panel, parsed.year);
-    if (!yearReady) {
-      logDateFillStep(runtime, "年份切换失败", String(parsed.year));
-      return false;
-    }
-
-    panel = findVisibleDatePanel(runtime.el) || panel;
-    const monthLabel = `${Number(parsed.month)}月`;
-    if (!(await clickPanelCell(panel, monthLabel))) {
-      logDateFillStep(runtime, "月份点击失败", monthLabel);
-      return false;
-    }
-
-    logDateFillStep(runtime, "月份点击成功", monthLabel);
-    await sleep(120);
-
-    if (parsed.day) {
-      panel = findVisibleDatePanel(runtime.el) || panel;
-      const dayOk = await clickPanelCell(panel, String(Number(parsed.day)));
-      if (!dayOk) {
-        logDateFillStep(runtime, "日期点击失败", String(Number(parsed.day)));
+      if (!(await movePickerToYear(getPanel, parsed.year))) {
+        logDateFillStep(runtime, "年份切换失败", String(parsed.year));
         return false;
       }
-      logDateFillStep(runtime, "日期点击成功", String(Number(parsed.day)));
-      await sleep(120);
-    }
 
-    const matched = fillRuntime.matchesWrittenValue(runtime, runtime.el.value, desired);
-    logDateFillStep(
-      runtime,
-      matched ? "最终校验成功" : "最终校验失败",
-      `当前值=${runtime.el.value || "(empty)"}`
-    );
-    return matched;
+      if (!(await selectPickerMonth(getPanel, parsed.year, parsed.month))) {
+        logDateFillStep(runtime, "月份选择失败", String(parsed.month));
+        return false;
+      }
+      logDateFillStep(runtime, "月份选择成功", String(parsed.month));
+      await sleep(120);
+
+      let expected = desired;
+      if (parsed.day) {
+        // 只能选到月份的控件：点完月份面板就收起了，值是 YYYY-MM，没有日期格子可点，按年月校验。
+        const panelStillOpen =
+          (panel && isVisible(panel)) || Boolean(findVisibleDatePanel(runtime.el, panelsBeforeOpen));
+        const current = fillRuntime.parseDateParts(runtime.el.value);
+        if (!panelStillOpen && current.year && current.month && !current.day) {
+          expected = fillRuntime.formatDateParts(parsed, "month");
+          logDateFillStep(runtime, "面板已收起", "按月份精度校验");
+        } else {
+          const dayCandidates = buildDayLabelCandidates(parsed.day);
+          const dayOk = await clickPanelCell(getPanel(), dayCandidates, { skipHeader: true });
+          if (!dayOk) {
+            logDateFillStep(runtime, "日期点击失败", dayCandidates[0]);
+            return false;
+          }
+          logDateFillStep(runtime, "日期点击成功", dayCandidates[0]);
+          await sleep(120);
+        }
+      }
+
+      // 选择全部成功后才点“确定”提交：有的面板要确认后输入框才会更新。
+      // 失败路径不能确认，否则会把面板里默认的（通常是今天的）日期提交成错误值。
+      await closeDatePanel(panel, runtime.el, { confirm: true });
+      panelClosed = true;
+
+      const matched = fillRuntime.matchesWrittenValue(runtime, runtime.el.value, expected);
+      logDateFillStep(
+        runtime,
+        matched ? "最终校验成功" : "最终校验失败",
+        `当前值=${runtime.el.value || "(empty)"}`
+      );
+      return matched;
+    } finally {
+      if (!panelClosed) {
+        await closeDatePanel(panel, runtime.el, { confirm: false });
+      }
+    }
   }
 
   function logDateFillStep(runtime, step, detail = "") {
@@ -1973,121 +2007,461 @@
     sendLog("info", message);
   }
 
-  function findVisibleDatePanel(anchorEl) {
-    const candidates = Array.from(
-      document.querySelectorAll(
-        '[class*="picker"],[class*="Picker"],[class*="calendar"],[class*="Calendar"],[role="dialog"]'
-      )
-    ).filter((node) => {
+  const DATE_TRIGGER_WRAPPER_SELECTOR =
+    '[class*="input-affix-wrapper"],[class*="picker-input"],[class*="input-wrapper"],[class*="picker-trigger"],[class*="date-picker"],[class*="DatePicker"],[class*="date-editor"],.ant-picker';
+  const DATE_PANEL_SELECTOR =
+    '[class*="picker"],[class*="Picker"],[class*="calendar"],[class*="Calendar"],[class*="dropdown"],[class*="Dropdown"],[class*="popup"],[class*="Popup"],[role="dialog"]';
+  const DATE_PANEL_HEADER_SELECTOR = '[class*="header"],[class*="Header"],[class*="head"]';
+  const DATE_PANEL_ZH_TEXT = /\d{4}\s*年|(?:^|\D)(?:1[0-2]|[1-9])\s*月/;
+  const DATE_PANEL_EN_MONTH_TEXT = /\b(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\b/i;
+
+  function collectDateTriggerCandidates(el) {
+    const candidates = [el];
+
+    const wrapper = el.closest?.(DATE_TRIGGER_WRAPPER_SELECTOR);
+    if (wrapper && !candidates.includes(wrapper)) {
+      candidates.push(wrapper);
+    }
+
+    if (el.parentElement && !candidates.includes(el.parentElement)) {
+      candidates.push(el.parentElement);
+    }
+
+    return candidates;
+  }
+
+  function collectDatePanelCandidates() {
+    return Array.from(document.querySelectorAll(DATE_PANEL_SELECTOR));
+  }
+
+  function looksLikeDatePanelText(text) {
+    if (DATE_PANEL_ZH_TEXT.test(text)) return true;
+    return DATE_PANEL_EN_MONTH_TEXT.test(text) && /\b\d{4}\b/.test(text);
+  }
+
+  function findVisibleDatePanel(anchorEl, priorPanels = null, { freshOnly = false } = {}) {
+    const matched = collectDatePanelCandidates().filter((node) => {
       if (node.contains?.(anchorEl)) return false;
       if (!isVisible(node)) return false;
-      const text = normalizeText(node.textContent || "");
-      return /\d{4}年|1月|2月|3月|4月|5月|6月|7月|8月|9月|10月|11月|12月/.test(text);
+      return looksLikeDatePanelText(normalizeText(node.textContent || ""));
     });
+    // 只保留最外层：面板内部的表头、格子类名里也常带 picker，不去重会把它们当成独立面板。
+    const candidates = matched.filter(
+      (node) => !matched.some((other) => other !== node && other.contains(node))
+    );
 
     if (candidates.length === 0) return null;
-    if (!anchorEl) return candidates[0];
+
+    // 优先选这次新打开的面板，避免误命中上一个日期字段遗留在页面上还没关闭的旧面板。
+    const freshCandidates = priorPanels
+      ? candidates.filter((node) => !priorPanels.has(node))
+      : candidates;
+    if (freshOnly && freshCandidates.length === 0) return null;
+    const pool = freshCandidates.length > 0 ? freshCandidates : candidates;
+
+    if (!anchorEl) return pool[0];
 
     const anchorRect = anchorEl.getBoundingClientRect();
-    return candidates
+    return pool
       .map((node) => {
         const rect = node.getBoundingClientRect();
         const dx = rect.left - anchorRect.left;
-        const dy = rect.top - anchorRect.bottom;
+        const dy = Math.min(
+          Math.abs(rect.top - anchorRect.bottom),
+          Math.abs(anchorRect.top - rect.bottom)
+        );
         return {
           node,
-          distance: Math.abs(dx) + Math.abs(dy),
+          distance: Math.abs(dx) + dy,
         };
       })
-      .sort((left, right) => left.distance - right.distance)[0]?.node || candidates[0];
+      .sort((left, right) => left.distance - right.distance)[0]?.node || pool[0];
   }
 
-  async function movePickerToYear(panel, targetYear) {
-    for (let attempt = 0; attempt < 24; attempt += 1) {
-      const currentYear = getVisiblePickerYear(panel);
-      if (!currentYear) return true;
-      if (currentYear === targetYear) return true;
+  const DATE_PANEL_CONFIRM_KEYWORDS = ["确定", "确认", "完成", "ok", "done"];
 
-      const control = findYearNavigationControl(panel, currentYear, targetYear);
-      if (!control) return false;
+  function findDatePanelConfirmButton(panel) {
+    if (!panel) return null;
+    const nodes = Array.from(panel.querySelectorAll('button,[role="button"],a,span'));
+    return (
+      nodes.find((node) => {
+        if (!isVisible(node)) return false;
+        const text = normalizeText(node.textContent || "").toLowerCase();
+        return DATE_PANEL_CONFIRM_KEYWORDS.includes(text);
+      }) || null
+    );
+  }
+
+  async function closeDatePanel(panel, anchorEl, { confirm = true } = {}) {
+    // 有的日期面板需要点“确定/OK”才会真正收起并提交选中的值，不能只靠失焦关闭。
+    const confirmButton = confirm ? findDatePanelConfirmButton(panel) : null;
+    if (confirmButton) {
+      try {
+        clickLikeUser(confirmButton);
+        await sleep(60);
+      } catch (_) {
+        // ignore
+      }
+    }
+
+    try {
+      anchorEl?.blur?.();
+    } catch (_) {
+      // ignore
+    }
+
+    if (!panel || !isVisible(panel)) return;
+
+    // 模拟在面板外按下鼠标。落点选在日期控件外层、且不包含面板的最近祖先上：
+    // 既在触发器之外（不会把面板重新点开），又尽量留在表单内部（不会触发外层弹窗的“点外部关闭”）。
+    const triggerRoot = anchorEl?.closest?.(DATE_TRIGGER_WRAPPER_SELECTOR) || anchorEl;
+    let outside = triggerRoot?.parentElement || null;
+    while (outside && outside.contains(panel)) {
+      outside = outside.parentElement;
+    }
+    try {
+      const target = outside || document.body;
+      target.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
+      target.dispatchEvent(new MouseEvent("mouseup", { bubbles: true }));
+    } catch (_) {
+      // ignore
+    }
+
+    await sleep(60);
+    if (!isVisible(panel)) return;
+
+    // 仍未关闭才发 Escape，并且从面板自身派发，避免直接打到 document 上把外层弹窗一起关掉。
+    try {
+      panel.dispatchEvent(
+        new KeyboardEvent("keydown", { key: "Escape", code: "Escape", bubbles: true })
+      );
+    } catch (_) {
+      // ignore
+    }
+  }
+
+  function isInPanelHeader(node, panel) {
+    const header = node.closest?.(DATE_PANEL_HEADER_SELECTOR);
+    return Boolean(header && header !== panel && panel.contains(header));
+  }
+
+  // 读取面板表头当前显示的年、月。表头常见形态：“2026年”“3月”分开两个按钮、“2026年3月”一个节点、
+  // 英文“Mar 2026”或“Mar”“2026”两个按钮。纯数字年份只在表头区域内才认，避免把年份格子当成表头。
+  function readPickerHeader(panel) {
+    const header = { year: 0, month: 0, yearNode: null, monthNode: null };
+    if (!panel) return header;
+
+    for (const node of panel.querySelectorAll("*")) {
+      if (header.year && header.month) break;
+      const text = normalizeText(node.textContent || "").toLowerCase();
+      if (!text || text.length > 24) continue;
+      if (hasDigitInChildElements(node)) continue;
+      if (!isVisible(node)) continue;
+
+      const inHeader = isInPanelHeader(node, panel);
+      const zh = text.match(/^(\d{4})\s*年(?:\s*(1[0-2]|0?[1-9])\s*月)?$/);
+      if (zh) {
+        if (!header.year) {
+          header.year = Number(zh[1]);
+          header.yearNode = node;
+        }
+        if (zh[2] && !header.month) {
+          header.month = Number(zh[2]);
+          header.monthNode = node;
+        }
+        continue;
+      }
+
+      if (!inHeader) continue;
+
+      const combined = fillRuntime.parseDateParts(text);
+      if (combined.year && /[a-z]/.test(text)) {
+        if (!header.year) {
+          header.year = combined.year;
+          header.yearNode = node;
+        }
+        if (combined.month && !header.month) {
+          header.month = combined.month;
+          header.monthNode = node;
+        }
+        continue;
+      }
+
+      if (!header.year && /^\d{4}$/.test(text)) {
+        header.year = Number(text);
+        header.yearNode = node;
+        continue;
+      }
+
+      if (!header.month) {
+        const month = parseMonthLabel(text);
+        if (month) {
+          header.month = month;
+          header.monthNode = node;
+        }
+      }
+    }
+
+    return header;
+  }
+
+  // 表头容器（如 “2026年” “9月” 两个按钮的父节点）的整体文本也像年月，只认最内层那个节点，
+  // 否则会把整个表头当成年份标签：翻页按钮全在它里面，按位置就找不到了。
+  function hasDigitInChildElements(node) {
+    return Array.from(node.children || []).some((child) => /\d/.test(child.textContent || ""));
+  }
+
+  function parseMonthLabel(text) {
+    const zh = String(text || "").match(/^(1[0-2]|0?[1-9])\s*月$/);
+    if (zh) return Number(zh[1]);
+    const en = String(text || "").toLowerCase().match(/^([a-z]{3,9})\.?$/);
+    if (!en) return 0;
+    const index = MONTH_NAMES_EN_SHORT.indexOf(en[1].slice(0, 3));
+    if (index < 0) return 0;
+    const full = MONTH_NAMES_EN_FULL[index];
+    return en[1].length === 3 || full.startsWith(en[1]) ? index + 1 : 0;
+  }
+
+  async function movePickerToYear(getPanel, targetYear) {
+    let header = readPickerHeader(getPanel());
+    if (!header.year) {
+      // 认不出面板当前年份时，只有目标就是今年才继续（空日期控件通常默认停在今年），
+      // 否则宁可失败，也不要在错误的年份里点月份把错值填进去。
+      return targetYear === new Date().getFullYear();
+    }
+    if (header.year === targetYear) return true;
+
+    let triedLabelJump = false;
+    let lastYear = header.year;
+    let clicksSinceYearChange = 0;
+    const maxClicks = Math.min(Math.abs(header.year - targetYear) * 13 + 4, 200);
+
+    for (let click = 0; click < maxClicks; click += 1) {
+      header = readPickerHeader(getPanel());
+      if (!header.year) break;
+      if (header.year === targetYear) return true;
+
+      if (header.year !== lastYear) {
+        // 一次年份变化要点好几下，说明拿到的是“上/下一月”按钮，差距大时改走“点年份标签→选年份”。
+        if (clicksSinceYearChange > 1 && Math.abs(header.year - targetYear) > 1 && !triedLabelJump) {
+          triedLabelJump = true;
+          if (await tryJumpToYearViaLabel(getPanel, targetYear)) return true;
+          continue;
+        }
+        lastYear = header.year;
+        clicksSinceYearChange = 0;
+      } else if (clicksSinceYearChange > 13) {
+        break;
+      }
+
+      const direction = targetYear < header.year ? "prev" : "next";
+      const control = findPanelNavControl(getPanel(), header, direction, "year");
+      if (!control) break;
 
       clickLikeUser(control);
+      clicksSinceYearChange += 1;
       await sleep(120);
+    }
+
+    if (readPickerHeader(getPanel()).year === targetYear) return true;
+    return triedLabelJump ? false : await tryJumpToYearViaLabel(getPanel, targetYear);
+  }
+
+  async function tryJumpToYearViaLabel(getPanel, targetYear) {
+    const header = readPickerHeader(getPanel());
+    if (!header.yearNode) return false;
+
+    clickLikeUser(header.yearNode);
+    await sleep(150);
+
+    // 年份视图一次只显示一个年代（如 2020-2029），目标不在当前范围时先翻年代。
+    for (let attempt = 0; attempt < 12; attempt += 1) {
+      const panel = getPanel();
+      if (await clickPanelCell(panel, buildYearLabelCandidates(targetYear), { skipHeader: true })) {
+        await sleep(150);
+        return readPickerHeader(getPanel()).year === targetYear;
+      }
+
+      const range = readPickerYearRange(panel);
+      if (!range) return false;
+      const direction = targetYear < range.start ? "prev" : "next";
+      const control = findPanelNavControl(panel, { yearNode: range.node }, direction, "year");
+      if (!control) return false;
+      clickLikeUser(control);
+      await sleep(150);
     }
 
     return false;
   }
 
-  function getVisiblePickerYear(panel) {
-    const nodes = Array.from(panel.querySelectorAll("*"));
-    for (const node of nodes) {
+  function readPickerYearRange(panel) {
+    for (const node of panel.querySelectorAll("*")) {
       const text = normalizeText(node.textContent || "");
-      const match = text.match(/^(\d{4})年$/);
-      if (match) {
-        return Number(match[1]);
+      if (text.length > 24) continue;
+      if (hasDigitInChildElements(node)) continue;
+      const match = text.match(/^(\d{4})\s*年?\s*[-~～至–—]\s*(\d{4})\s*年?$/);
+      if (match && isVisible(node)) {
+        return { start: Number(match[1]), end: Number(match[2]), node };
       }
     }
-    return 0;
+    return null;
   }
 
-  function findYearNavigationControl(panel, currentYear, targetYear) {
-    const buttons = Array.from(
+  // 先按类名/aria/title 找语义明确的翻页按钮（antd super-prev、element d-arrow-left 等），
+  // 找不到再按位置找：只看和表头标签同一行、且不含数字的元素，避免把日期格子当成按钮。
+  const YEAR_NAV_HINTS = {
+    prev: /super-prev|prev-year|year-prev|double-left|d-arrow-left|arrow-double-left|上一年|previous year|last year|«|<</i,
+    next: /super-next|next-year|year-next|double-right|d-arrow-right|arrow-double-right|下一年|next year|»|>>/i,
+  };
+  const MONTH_NAV_HINTS = {
+    prev: /prev-btn|prev-month|month-prev|arrow-left|icon-left|上一月|上个月|previous month|‹/i,
+    next: /next-btn|next-month|month-next|arrow-right|icon-right|下一月|下个月|next month|›/i,
+  };
+
+  function describeNavNode(node) {
+    return [
+      node.getAttribute?.("class") || "",
+      node.getAttribute?.("aria-label") || "",
+      node.getAttribute?.("title") || "",
+      normalizeText(node.textContent || ""),
+    ].join(" ");
+  }
+
+  function findPanelNavControl(panel, header, direction, unit) {
+    if (!panel) return null;
+
+    const navNodes = Array.from(
       panel.querySelectorAll(
-        'button,[role="button"],[tabindex],[class*="prev"],[class*="next"],[class*="arrow"],[class*="Arrow"]'
+        'button,[role="button"],a,i,span,[class*="prev"],[class*="next"],[class*="arrow"],[class*="Arrow"]'
       )
-    ).filter((node) => isVisible(node));
+    ).filter((node) => isVisible(node) && !/\d/.test(normalizeText(node.textContent || "")));
 
-    if (buttons.length === 0) return null;
+    const toClickable = (node) => node.closest?.('button,[role="button"],a') || node;
+    const yearHint = YEAR_NAV_HINTS[direction];
+    const monthHint = MONTH_NAV_HINTS[direction];
 
-    const yearNode = Array.from(panel.querySelectorAll("*")).find((node) =>
-      /^\d{4}年$/.test(normalizeText(node.textContent || ""))
+    const explicit = navNodes.find((node) => {
+      const desc = describeNavNode(node);
+      if (unit === "year") return yearHint.test(desc);
+      return monthHint.test(desc) && !yearHint.test(desc);
+    });
+    if (explicit) return toClickable(explicit);
+
+    const labelNode = unit === "month" && direction === "next"
+      ? header?.monthNode || header?.yearNode
+      : header?.yearNode || header?.monthNode;
+    if (!labelNode) return null;
+
+    const labelRect = labelNode.getBoundingClientRect();
+    const sameRow = navNodes
+      .map((node) => ({ node, rect: node.getBoundingClientRect() }))
+      .filter(({ node, rect }) => {
+        if (node.contains(labelNode) || labelNode.contains(node)) return false;
+        const centerY = rect.top + rect.height / 2;
+        return centerY >= labelRect.top - 4 && centerY <= labelRect.bottom + 4;
+      });
+
+    const sideNodes = sameRow.filter(({ rect }) =>
+      direction === "prev" ? rect.right <= labelRect.left : rect.left >= labelRect.right
     );
-    if (!yearNode) {
-      return targetYear < currentYear ? buttons[0] : buttons[buttons.length - 1];
+    if (sideNodes.length === 0) return null;
+
+    // 年份：取最外侧（« 通常在 ‹ 外面）；月份：取紧挨表头的那个。
+    const outermostFirst = (a, b) =>
+      direction === "prev" ? a.rect.left - b.rect.left : b.rect.right - a.rect.right;
+    sideNodes.sort(unit === "year" ? outermostFirst : (a, b) => -outermostFirst(a, b));
+    return toClickable(sideNodes[0].node);
+  }
+
+  function isMonthGridView(panel) {
+    const months = new Set();
+    for (const node of panel.querySelectorAll('td,li,button,[role="gridcell"],[class*="cell"]')) {
+      if (isInPanelHeader(node, panel)) continue;
+      const text = normalizeText(node.textContent || "");
+      // 只认带“月”或英文月份名的格子，纯数字 1~12 在日期视图里也会出现。
+      if (/^\d+$/.test(text)) continue;
+      const month = parseMonthLabel(text);
+      if (month) months.add(month);
+    }
+    return months.size >= 12;
+  }
+
+  async function selectPickerMonth(getPanel, targetYear, targetMonth) {
+    if (isMonthGridView(getPanel())) {
+      return clickPanelCell(getPanel(), buildMonthLabelCandidates(targetMonth), { skipHeader: true });
     }
 
-    const yearRect = yearNode.getBoundingClientRect();
-    const leftButtons = [];
-    const rightButtons = [];
+    // 日期视图：表头显示当前年月，用“上/下一月”翻到目标月份。
+    const target = targetYear * 12 + targetMonth;
+    for (let attempt = 0; attempt < 24; attempt += 1) {
+      const header = readPickerHeader(getPanel());
+      if (!header.year || !header.month) break;
+      const current = header.year * 12 + header.month;
+      if (current === target) return true;
 
-    for (const button of buttons) {
-      const rect = button.getBoundingClientRect();
-      if (rect.right <= yearRect.left) {
-        leftButtons.push({ button, rect });
-      } else if (rect.left >= yearRect.right) {
-        rightButtons.push({ button, rect });
+      const direction = current > target ? "prev" : "next";
+      const control = findPanelNavControl(getPanel(), header, direction, "month");
+      if (!control) break;
+      clickLikeUser(control);
+      await sleep(120);
+    }
+
+    // 翻不动时退回：点表头月份打开月份网格再选。
+    const header = readPickerHeader(getPanel());
+    if (header.monthNode && header.monthNode !== header.yearNode) {
+      clickLikeUser(header.monthNode);
+      await sleep(150);
+      if (isMonthGridView(getPanel())) {
+        return clickPanelCell(getPanel(), buildMonthLabelCandidates(targetMonth), { skipHeader: true });
       }
     }
 
-    if (targetYear < currentYear) {
-      return leftButtons.sort((a, b) => b.rect.right - a.rect.right)[0]?.button || buttons[0];
-    }
-
-    return rightButtons.sort((a, b) => a.rect.left - b.rect.left)[0]?.button || buttons[buttons.length - 1];
+    return false;
   }
 
-  async function clickPanelCell(panel, text) {
-    const normalizedTarget = normalizeText(text);
+  // 相邻月份补位的格子（上月末/下月初）和当前月份的日期同名，要排除掉。
+  // 有的组件库给当月格子打标记（antd: ant-picker-cell-in-view），有的给补位格子打标记（element: prev-month）。
+  const IN_VIEW_CELL_PATTERN = /in-view|current-month|in-month|this-month/i;
+  const OUT_OF_VIEW_CELL_PATTERN =
+    /prev-month|next-month|other-month|last-month|outside|not-current|is-other|adjacent|\bold\b|\bnew\b/i;
+
+  function getCellClassText(node) {
+    const cell = node.closest?.('td,[role="gridcell"],[class*="cell"]') || node;
+    return `${node.getAttribute?.("class") || ""} ${cell.getAttribute?.("class") || ""}`;
+  }
+
+  async function clickPanelCell(panel, textOrCandidates, { skipHeader = false } = {}) {
+    if (!panel) return false;
+
+    const normalizedTargets = new Set(
+      (Array.isArray(textOrCandidates) ? textOrCandidates : [textOrCandidates])
+        .map((item) => normalizeText(item).toLowerCase())
+        .filter(Boolean)
+    );
     const candidates = Array.from(
-      panel.querySelectorAll(
-        'button,[role="button"],td,li,div,span'
-      )
+      panel.querySelectorAll('button,[role="button"],[role="gridcell"],td,li,div,span')
     ).filter((node) => {
+      if (!normalizedTargets.has(normalizeText(node.textContent || "").toLowerCase())) return false;
       if (!isVisible(node)) return false;
       if (node.getAttribute?.("aria-disabled") === "true") return false;
-      const className = String(node.className || "");
-      if (/disabled/i.test(className)) return false;
-      return normalizeText(node.textContent || "") === normalizedTarget;
+      if (/disabled/i.test(getCellClassText(node))) return false;
+      if (skipHeader && isInPanelHeader(node, panel)) return false;
+      return true;
     });
 
     if (candidates.length === 0) return false;
 
-    const target = candidates
-      .sort((left, right) => {
-        const leftArea = left.getBoundingClientRect().width * left.getBoundingClientRect().height;
-        const rightArea = right.getBoundingClientRect().width * right.getBoundingClientRect().height;
-        return leftArea - rightArea;
-      })[0];
+    const markedInView = candidates.filter((node) => IN_VIEW_CELL_PATTERN.test(getCellClassText(node)));
+    const notOutOfView = candidates.filter(
+      (node) => !OUT_OF_VIEW_CELL_PATTERN.test(getCellClassText(node))
+    );
+    const pool =
+      markedInView.length > 0 ? markedInView : notOutOfView.length > 0 ? notOutOfView : candidates;
+    const area = (node) => {
+      const rect = node.getBoundingClientRect();
+      return rect.width * rect.height;
+    };
+    const target = pool.sort((left, right) => area(left) - area(right))[0];
 
     clickLikeUser(target);
     await sleep(80);
@@ -2105,18 +2479,36 @@
     }
   }
 
-  function parseDateParts(value) {
-    const text = String(value || "").trim();
-    const match = text.match(/^(\d{4})-(\d{2})(?:-(\d{2}))?$/);
-    if (!match) {
-      return { year: 0, month: 0, day: 0 };
-    }
+  const MONTH_NAMES_EN_SHORT = [
+    "jan", "feb", "mar", "apr", "may", "jun",
+    "jul", "aug", "sep", "oct", "nov", "dec",
+  ];
+  const MONTH_NAMES_EN_FULL = [
+    "january", "february", "march", "april", "may", "june",
+    "july", "august", "september", "october", "november", "december",
+  ];
 
-    return {
-      year: Number(match[1]),
-      month: Number(match[2]),
-      day: Number(match[3] || 0),
-    };
+  function buildMonthLabelCandidates(month) {
+    const n = Number(month);
+    if (!n) return [];
+    const padded = String(n).padStart(2, "0");
+    const candidates = [`${n}月`, `${padded}月`, `${n} 月`, `${padded} 月`, String(n), padded];
+    const monthIndex = n - 1;
+    if (MONTH_NAMES_EN_SHORT[monthIndex]) candidates.push(MONTH_NAMES_EN_SHORT[monthIndex]);
+    if (MONTH_NAMES_EN_FULL[monthIndex]) candidates.push(MONTH_NAMES_EN_FULL[monthIndex]);
+    return Array.from(new Set(candidates));
+  }
+
+  function buildDayLabelCandidates(day) {
+    const n = Number(day);
+    if (!n) return [];
+    return Array.from(new Set([String(n), String(n).padStart(2, "0")]));
+  }
+
+  function buildYearLabelCandidates(year) {
+    const n = Number(year);
+    if (!n) return [];
+    return [`${n}年`, String(n)];
   }
 
   function setNativeValue(element, value) {
@@ -2339,8 +2731,10 @@
     return createMappingCacheKeyFromSignature(createMappingCacheSignature(fields));
   }
 
-  function createMappingCacheKeyFromSignature(signature) {
-    const base = `${location.origin}${location.pathname}::${JSON.stringify(signature)}`;
+  function createMappingCacheKeyFromSignature(signature, targetSlotIndex = null) {
+    // 自动匹配沿用旧的 key 格式，升级后已有的映射缓存仍然有效。
+    const slotPart = targetSlotIndex == null ? "" : `slot=${targetSlotIndex}::`;
+    const base = `${location.origin}${location.pathname}::${slotPart}${JSON.stringify(signature)}`;
     return `${location.host}:${hashString(base)}`;
   }
 

@@ -59,6 +59,7 @@
     { values: ["志愿服务", "volunteer"] },
     { values: ["科研", "research"] },
     { values: ["竞赛", "competition", "contest"] },
+    { values: ["社会实践", "socialpractice", "practice"] },
   ];
 
   const SECTION_DEFINITIONS = [
@@ -91,7 +92,8 @@
         { key: "currentProvince", label: "现居省份/州", input: "text", placeholder: "上海" },
         { key: "currentCountry", label: "现居国家", input: "text", placeholder: "中国" },
         { key: "currentDistrict", label: "现居区县", input: "text", placeholder: "浦东新区" },
-        { key: "nationality", label: "民族/国籍", input: "text", placeholder: "中国" },
+        { key: "ethnicity", label: "民族", input: "text", placeholder: "汉族" },
+        { key: "nationality", label: "国籍", input: "text", placeholder: "中国" },
         { key: "citizenship", label: "公民身份", input: "text", placeholder: "中国" },
         { key: "maritalStatus", label: "婚姻状况", input: "select", options: ["", "未婚", "已婚", "不方便透露"] },
         { key: "currentCompany", label: "当前公司", input: "text", placeholder: "某科技公司" },
@@ -123,6 +125,8 @@
         { key: "hometownCity", label: "籍贯城市", input: "text", placeholder: "南京" },
         { key: "hometownProvince", label: "籍贯省份/州", input: "text", placeholder: "江苏" },
         { key: "hukouLocation", label: "户口所在地", input: "text", placeholder: "江苏南京" },
+        { key: "sourceLocation", label: "生源地", input: "text", placeholder: "江苏南京" },
+        { key: "archiveLocation", label: "档案存放单位", input: "text", placeholder: "人力资源市场" },
         { key: "emergencyContactName", label: "紧急联系人姓名", input: "text", placeholder: "李四" },
         { key: "emergencyContactPhone", label: "紧急联系人电话", input: "tel", placeholder: "13700137000" },
         { key: "timezone", label: "当前时区", input: "text", placeholder: "Asia/Shanghai" },
@@ -138,12 +142,33 @@
         { key: "passportName", label: "护照姓名", input: "text", placeholder: "ZHANG/SAN" },
         { key: "passportNumber", label: "护照号码", input: "text", placeholder: "E12345678" },
         { key: "passportExpiryDate", label: "护照到期日", input: "date" },
-        { key: "politicalStatus", label: "政治面貌", input: "text", placeholder: "群众 / 中共党员 / 其他" },
+        { key: "politicalStatus", label: "政治面貌", input: "text", placeholder: "群众 / 共青团员 / 中共党员 / 中共预备党员" },
+        { key: "partyJoiningDate", label: "入党/入团时间", input: "date" },
+        { key: "heightCm", label: "身高(cm)", input: "text", placeholder: "170" },
+        { key: "weightKg", label: "体重(kg)", input: "text", placeholder: "60" },
+        { key: "healthStatus", label: "健康状况", input: "text", placeholder: "健康 / 良好" },
         { key: "workAuthorization", label: "工作资格", input: "text", placeholder: "在中国合法工作，无限制" },
         { key: "visaStatus", label: "签证状态", input: "text", placeholder: "不适用" },
         { key: "sponsorshipNeeded", label: "是否需要签证担保", input: "select", options: ["", "是", "否"] },
         { key: "driversLicense", label: "是否持有驾照", input: "select", options: ["", "是", "否"] },
         { key: "securityClearance", label: "安全许可", input: "text", placeholder: "无 / 选填" },
+      ],
+    },
+    {
+      key: "familyMembers",
+      label: "家庭成员",
+      type: "list",
+      initialItems: 1,
+      slots: 6,
+      itemLabel: "家庭成员",
+      note: "常见于国企/事业单位/机关报名表中的家庭主要成员信息，按表格行顺序填写，没有可以留空。",
+      fields: [
+        { key: "relationship", label: "称谓", input: "text", placeholder: "父亲 / 母亲 / 配偶 / 子女" },
+        { key: "name", label: "姓名", input: "text", placeholder: "张三" },
+        { key: "birthDate", label: "出生日期", input: "date" },
+        { key: "employer", label: "工作单位", input: "text", placeholder: "某某单位" },
+        { key: "position", label: "职务", input: "text", placeholder: "部门经理" },
+        { key: "phone", label: "联系方式", input: "tel", placeholder: "13800138000" },
       ],
     },
     {
@@ -372,17 +397,18 @@
       label: "校园经历",
       type: "list",
       initialItems: 1,
-      slots: 4,
+      slots: 5,
       itemLabel: "校园经历",
-      note: "适合学生组织、社团、志愿服务、科研助理等经历。",
+      note: "适合学生组织、社团、志愿服务、科研助理、校内实践、社会实践等经历。",
       fields: [
         {
           key: "category",
           label: "经历类型",
           input: "select",
-          options: ["", "学生组织", "社团", "志愿服务", "科研", "竞赛", "其他"],
+          options: ["", "学生组织", "社团", "志愿服务", "科研", "竞赛", "社会实践", "其他"],
         },
-        { key: "organization", label: "组织名称", input: "text", placeholder: "浙江大学 ACM 协会" },
+        { key: "activityName", label: "活动名称", input: "text", placeholder: "志愿服务" },
+        { key: "organization", label: "组织/主办单位", input: "text", placeholder: "浙江大学 ACM 协会" },
         { key: "role", label: "担任角色", input: "text", placeholder: "技术负责人" },
         { key: "startDate", label: "开始时间", input: "date" },
         { key: "endDate", label: "结束时间", input: "date" },
@@ -394,6 +420,23 @@
         },
         { key: "description", label: "描述", input: "textarea", placeholder: "职责、活动内容、覆盖范围" },
         { key: "achievements", label: "成果", input: "textarea", placeholder: "获奖、影响力、人数、结果" },
+      ],
+    },
+    {
+      key: "trainingExperiences",
+      label: "培训经历",
+      type: "list",
+      initialItems: 1,
+      slots: 4,
+      itemLabel: "培训经历",
+      note: "适合填写学校/机构组织的培训计划、专项课程等经历，按时间从近到远填写。",
+      fields: [
+        { key: "programName", label: "培训项目名称", input: "text", placeholder: " " },
+        { key: "organization", label: "培训机构", input: "text", placeholder: " " },
+        { key: "certificateNo", label: "合格证书编号", input: "text", placeholder: "选填" },
+        { key: "startDate", label: "开始时间", input: "date" },
+        { key: "endDate", label: "结束时间", input: "date" },
+        { key: "content", label: "培训内容", input: "textarea", placeholder: "培训方向、课程内容、获得的能力等" },
       ],
     },
     {
@@ -454,10 +497,12 @@
   const FIELD_VALUE_ALIASES = {
     personal: {
       birthDate: ["birthday", "birth", "dob", "birthMonth", "birthYearMonth", "出生年月"],
+      ethnicity: ["ethnic", "ethnicGroup", "民族"],
     },
     contactAndLocation: {
       hometownCity: ["hometown", "nativePlace", "birthPlace", "籍贯"],
       hometownProvince: ["hometown", "nativePlace", "birthPlace", "籍贯"],
+      sourceLocation: ["studentSource", "sourcePlace", "生源地"],
     },
     identityAndAuthorization: {
       personalIdNumber: ["idNumber", "idCardNumber", "identityCardNumber", "certificateNum", "身份证号"],
@@ -492,8 +537,22 @@
       endDate: ["end", "finishDate", "finishTime", "endTime"],
     },
     campusExperiences: {
+      activityName: ["activity", "practiceName", "活动名称"],
+      organization: ["host", "hostOrg", "主办单位", "组织单位"],
+      role: ["identity", "身份", "担任角色"],
       startDate: ["start", "beginDate", "beginTime", "startTime"],
       endDate: ["end", "finishDate", "finishTime", "endTime"],
+    },
+    trainingExperiences: {
+      programName: ["trainingProgram", "trainingName", "培训项目", "培训计划"],
+      organization: ["trainingOrg", "trainingInstitution", "培训单位", "培训机构"],
+      content: ["trainingContent", "培训内容"],
+      startDate: ["start", "beginDate", "beginTime", "startTime"],
+      endDate: ["end", "finishDate", "finishTime", "endTime"],
+    },
+    familyMembers: {
+      relationship: ["title", "appellation", "称谓", "与本人关系"],
+      employer: ["company", "unit", "workUnit", "工作单位"],
     },
   };
 
@@ -942,7 +1001,7 @@
   }
 
   window.ResumeSchema = {
-    version: 4,
+    version: 8,
     sections: SECTION_DEFINITIONS,
     clone,
     getSectionDefinition,

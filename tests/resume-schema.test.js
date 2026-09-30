@@ -33,9 +33,24 @@ test("resume schema exposes campus recruiting education and experience fields", 
   assert.ok(catalog.some((field) => field.path === "educations.0.advisor"));
   assert.ok(catalog.some((field) => field.path === "internships.0.company"));
   assert.ok(catalog.some((field) => field.path === "campusExperiences.0.organization"));
+  assert.ok(catalog.some((field) => field.path === "identityAndAuthorization.heightCm"));
+  assert.ok(catalog.some((field) => field.path === "identityAndAuthorization.weightKg"));
+  assert.ok(catalog.some((field) => field.path === "identityAndAuthorization.healthStatus"));
+  assert.ok(catalog.some((field) => field.path === "identityAndAuthorization.partyJoiningDate"));
+  assert.ok(catalog.some((field) => field.path === "contactAndLocation.sourceLocation"));
+  assert.ok(catalog.some((field) => field.path === "contactAndLocation.archiveLocation"));
+  assert.ok(catalog.some((field) => field.path === "familyMembers.0.relationship"));
+  assert.ok(catalog.some((field) => field.path === "familyMembers.0.employer"));
+  assert.ok(catalog.some((field) => field.path === "familyMembers.0.birthDate"));
+  assert.ok(catalog.some((field) => field.path === "trainingExperiences.0.programName"));
+  assert.ok(catalog.some((field) => field.path === "trainingExperiences.0.organization"));
+  assert.ok(catalog.some((field) => field.path === "trainingExperiences.0.content"));
+  assert.ok(catalog.some((field) => field.path === "campusExperiences.0.activityName"));
 
   assert.ok(Array.isArray(template.internships));
   assert.ok(Array.isArray(template.campusExperiences));
+  assert.ok(Array.isArray(template.familyMembers));
+  assert.ok(Array.isArray(template.trainingExperiences));
   assert.equal("educationType" in template.educations[0], true);
   assert.equal("studyMode" in template.educations[0], true);
   assert.equal("laboratory" in template.educations[0], true);
@@ -72,6 +87,32 @@ test("resume schema normalizes campus recruiting resume data", () => {
         role: "技术负责人",
         isCurrent: true,
       },
+      {
+        activityName: "电子科技大学新冠肺炎疫情防控志愿服务",
+        identity: "疫情防控志愿者",
+        description: "参与核酸检测秩序维护、信息登记、物资分发等工作。",
+        startDate: "2022/08",
+        endDate: "2022/09",
+      },
+    ],
+    familyMembers: [
+      {
+        title: "父亲",
+        name: "张父",
+        birthDate: "1970/03/12",
+        workUnit: "某某单位",
+        position: "工程师",
+        phone: "13800138000",
+      },
+    ],
+    trainingExperiences: [
+      {
+        programName: "卓越工程师教育培养计划（教育部批准）——机器人工程专业",
+        trainingOrg: "电子科技大学（教务处）",
+        trainingContent: "系统学习矩阵理论、微分几何等数学课程，以及机器人控制、驱动等核心课程。",
+        startDate: "2022/09",
+        endDate: "2025/06",
+      },
     ],
   });
 
@@ -89,6 +130,28 @@ test("resume schema normalizes campus recruiting resume data", () => {
   );
   assert.equal(normalized.campusExperiences[0].category, "学生组织");
   assert.equal(normalized.campusExperiences[0].isCurrent, "是");
+  assert.equal(normalized.familyMembers[0].relationship, "父亲");
+  assert.equal(normalized.familyMembers[0].employer, "某某单位");
+  assert.equal(normalized.familyMembers[0].birthDate, "1970-03-12");
+  assert.equal(
+    normalized.trainingExperiences[0].organization,
+    "电子科技大学（教务处）"
+  );
+  assert.equal(
+    normalized.trainingExperiences[0].content,
+    "系统学习矩阵理论、微分几何等数学课程，以及机器人控制、驱动等核心课程。"
+  );
+  assert.equal(normalized.trainingExperiences[0].startDate, "2022-09");
+  assert.equal(normalized.trainingExperiences[0].endDate, "2025-06");
+  assert.equal(
+    normalized.campusExperiences[1].activityName,
+    "电子科技大学新冠肺炎疫情防控志愿服务"
+  );
+  assert.equal(normalized.campusExperiences[1].role, "疫情防控志愿者");
+  assert.equal(
+    normalized.campusExperiences[1].description,
+    "参与核酸检测秩序维护、信息登记、物资分发等工作。"
+  );
 });
 
 test("resume schema preserves flexible date precision and legacy aliases", () => {

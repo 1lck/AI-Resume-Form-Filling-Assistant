@@ -51,7 +51,7 @@
 
         <section class="tab-panel active" id="tab-fill">
           <div class="template-bar">
-            <label for="fillTemplateSelect">简历模板（本次填充使用）</label>
+            <label for="fillTemplateSelect">简历模板（填充只使用已保存的内容）</label>
             <select id="fillTemplateSelect" class="template-select"></select>
           </div>
 
@@ -88,13 +88,36 @@
               </svg>
               <span id="startFillBtnText">开始填充</span>
             </button>
-            <button class="btn btn-outline btn-lg" id="startIncrementalFillBtn">
+            <button
+              class="btn btn-outline btn-lg"
+              id="startIncrementalFillBtn"
+              title="只填写页面上还空着的字段，已经有内容的字段不会被覆盖，适合补填漏项。"
+            >
               <span id="startIncrementalFillBtnText">增量填入</span>
             </button>
-            <button class="btn btn-outline btn-lg" id="startSelectionFillBtn">
-              <span id="startSelectionFillBtnText">选区填入</span>
-            </button>
-            <button class="btn btn-outline btn-lg" id="clearMappingCacheBtn">
+            <div class="selection-fill-group">
+              <button
+                class="btn btn-outline btn-lg"
+                id="startSelectionFillBtn"
+                title="点击后回到网页拖拽框选一块区域，只识别并填写该区域内的字段，适合超长表单分段填写。"
+              >
+                <span id="startSelectionFillBtnText">选区填入</span>
+              </button>
+              <div class="selection-fill-option">
+                <label for="targetSlotSelect">指定填第几条</label>
+                <select
+                  id="targetSlotSelect"
+                  class="template-select template-select-centered"
+                  title="“第 N 条”表示各经历列表（教育、实习、工作、项目等）同时只取第 N 条；选项内容来自已保存的简历。"
+                ></select>
+                <p class="selection-fill-hint">仅对上方「选区填入」生效，适合一次只能添加一条经历的弹窗表单。</p>
+              </div>
+            </div>
+            <button
+              class="btn btn-outline btn-lg"
+              id="clearMappingCacheBtn"
+              title="清空所有页面已缓存的字段映射结果，下次填充会重新调用 AI 分析，适合表单结构变了或上次映射填错了的情况。"
+            >
               清理映射缓存
             </button>
             <div class="tip" id="fillTip" hidden></div>
@@ -114,17 +137,17 @@
               <button class="btn btn-outline btn-sm" id="deleteTemplateBtn" title="删除当前模板">删除</button>
             </div>
             <div class="template-manager-row">
-              <button class="btn btn-outline btn-sm" id="exportTemplatesBtn" title="导出全部模板为 JSON 备份">导出</button>
-              <button class="btn btn-outline btn-sm" id="importTemplatesBtn" title="从 JSON 备份导入（覆盖当前模板）">导入</button>
+              <button class="btn btn-outline btn-sm" id="exportTemplatesBtn" title="把你所有的简历模板打包导出成一个 JSON 备份文件">导出</button>
+              <button class="btn btn-outline btn-sm" id="importTemplatesBtn" title="从备份文件恢复模板，会覆盖你当前所有的模板">导入</button>
             </div>
             <div class="template-manager-row">
-              <button class="btn btn-outline btn-sm" id="exportResumeJsonBtn" title="导出当前标准简历 JSON">导出当前简历</button>
-              <button class="btn btn-outline btn-sm" id="importResumeJsonBtn" title="导入标准简历 JSON 到当前模板">导入当前简历</button>
+              <button class="btn btn-outline btn-sm" id="exportResumeJsonBtn" title="只导出当前选中的这一份模板，单独存成 JSON 文件">导出当前简历</button>
+              <button class="btn btn-outline btn-sm" id="importResumeJsonBtn" title="导入一份简历 JSON，覆盖当前选中的这一个模板，不影响其他模板">导入当前简历</button>
             </div>
             <input type="file" id="importTemplatesFile" accept="application/json" hidden />
             <input type="file" id="importResumeJsonFile" accept="application/json" hidden />
             <div class="tip">
-              每个模板是一份独立的标准简历。基础信息相近时，可“复制当前”后只改侧重点（如测开 / 游戏开发 / 普通开发）。填充前在上方“自动填充”页切换模板即可。
+              每个模板是一份独立的标准简历。基础信息相近时，可“复制”后只改侧重点。填充前在上方“自动填充”页切换模板即可。填充只使用已保存的内容，修改后记得点击保存。
             </div>
           </div>
 
@@ -132,14 +155,11 @@
             <div class="section-header section-header-normal">
               <span>简历配置</span>
             </div>
-            <div class="tip">
-              简历字段较多，推荐在独立网页里编辑。新页面会复用当前扩展里的同一份标准简历数据。
-            </div>
             <div class="resume-launch-card">
               <div class="resume-launch-copy">
                 <div class="resume-launch-title">在宽页面里配置个人简历</div>
                 <div class="resume-launch-desc">
-                  更适合填写长文本、工作经历、教育经历和项目说明，保存后会立即同步到自动填充流程。
+                  简历字段较多，推荐在独立网页里编辑。"拉取模块"功能只加在"简历配置页"（宽页面）。
                 </div>
               </div>
               <button class="btn btn-primary" id="openResumeEditorBtn">打开简历配置页</button>
